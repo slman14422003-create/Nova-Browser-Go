@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nova_bg">#FFFAF9F5</color>
+    <color name="nova_ring">#FF141413</color>
+    <color name="nova_spark">#FFC6613F</color>
+    <color name="nova_dot">#FF141413</color>
+</resources>

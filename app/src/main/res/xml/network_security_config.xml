@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  أمان الشبكة:
+  - المتصفح يحتاج السماح بـ http للمواقع التي لا تدعم https (وضع «HTTPS أولاً» يرقّي ما يمكن ترقيته)، فالقاعدة العامة تسمح بها.
+  - الخدمات التي يتصل بها التطبيق نفسه (التحديثات، استخراج يوتيوب، الصور المصغّرة) تُمنع عليها http تماماً، فلا يمكن تحويل
+    اتصالاتها الداخلية إلى نص صريح.
+  - الثقة بشهادات النظام فقط (لا شهادات يضيفها المستخدم أو تطبيق آخر) لاتصالات التطبيق الداخلية.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">youtube.com</domain>
+        <domain includeSubdomains="true">ytimg.com</domain>
+        <domain includeSubdomains="true">googlevideo.com</domain>
+    </domain-config>
+</network-security-config>

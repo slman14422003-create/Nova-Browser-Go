@@ -1,0 +1,8 @@
+name: ✨ طلب ميزة
+description: اقترح ميزة جديدة
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes: { label: الفكرة, description: ما الذي تريده ولماذا؟ }
+    validations: { required: true }
