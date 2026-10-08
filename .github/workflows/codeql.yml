@@ -29,7 +29,7 @@ jobs:
           - language: actions          # ملفات workflows نفسها
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - if: matrix.build-mode == 'manual'
         uses: actions/setup-java@v5
