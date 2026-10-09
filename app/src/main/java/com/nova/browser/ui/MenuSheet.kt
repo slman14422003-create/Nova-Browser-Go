@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -104,14 +105,18 @@ private fun RowScope.QuickTile(label: String, icon: ImageVector, enabled: Boolea
         onClick = onClick, enabled = enabled, shape = RoundedCornerShape(24.dp), color = cs.surfaceContainerHigh,
         modifier = Modifier.weight(1f).alpha(if (enabled) 1f else 0.4f)
     ) {
-        Column(Modifier.padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.padding(vertical = 16.dp, horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, null)
             Spacer(Modifier.height(6.dp))
-            Text(label, style = MaterialTheme.typography.labelMedium)
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
+/**
+ * قائمة الخيارات: الشاشة الرئيسية قصيرة (أزرار سريعة + 4 صفوف)، وكل أدوات الصفحة في صفحة فرعية واحدة
+ * داخل نفس الورقة، فلا تمرير طويل ولا ازدحام.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MenuSheet(
@@ -122,54 +127,73 @@ fun MenuSheet(
     val cs = MaterialTheme.colorScheme
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     val hasPage = tab.url.isNotBlank()
+    var tools by remember { mutableStateOf(false) }
     fun act(a: () -> Unit) { scope.launch { state.hide() }.invokeOnCompletion { onDismiss(); a() } }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state, containerColor = cs.background) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickTile(L("التالي"), Icons.AutoMirrored.Filled.ArrowForward, tab.canForward) { act { tab.webView?.goForward() } }
-                QuickTile(if (tab.loading) L("إيقاف") else L("تحديث"), if (tab.loading) Icons.Default.Close else Icons.Default.Refresh, hasPage) {
-                    act { if (tab.loading) tab.webView?.stopLoading() else tab.webView?.reload() }
+        BackHandler(enabled = tools) { tools = false }
+        AnimatedContent(
+            targetState = tools, label = "menu",
+            transitionSpec = { fadeIn(tween(Adaptive.ms(180))) togetherWith fadeOut(tween(Adaptive.ms(120))) }
+        ) { isTools ->
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
+                if (!isTools) {
+                    val marked = hasPage && Library.isBookmarked(tab.url)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QuickTile(L("التالي"), Icons.AutoMirrored.Filled.ArrowForward, tab.canForward) { act { tab.webView?.goForward() } }
+                        QuickTile(if (tab.loading) L("إيقاف") else L("تحديث"), if (tab.loading) Icons.Default.Close else Icons.Default.Refresh, hasPage) {
+                            act { if (tab.loading) tab.webView?.stopLoading() else tab.webView?.reload() }
+                        }
+                        QuickTile(L("مشاركة"), Icons.Default.Share, hasPage) { act(onShare) }
+                        QuickTile(L("المفضلة"), if (marked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, hasPage) {
+                            act { toast(ctx, if (Library.toggleBookmark(tab.url, tab.title)) L("أُضيفت إلى المفضلة") else L("أُزيلت من المفضلة")) }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QuickTile(L("المكتبة"), Icons.Default.Star, true) { act { openPanel(ctx as android.app.Activity, "library") } }
+                        QuickTile(L("التنزيلات"), Icons.Default.KeyboardArrowDown, true) { act(onDownloads) }
+                        QuickTile(L("الإعدادات"), Icons.Default.Settings, true) { act(onSettings) }
+                        QuickTile(L("الرئيسية"), Icons.Default.Home, true) { act(onHome) }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        ListRow(groupShape(0, 4), L("تبويب جديد"), null, { act(onNewTab) }) { IconCircle { Icon(Icons.Default.Add, null) } }
+                        ListRow(groupShape(1, 4), L("بحث في الصفحة"), null, { act(onFind) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Search, null) } }
+                        ListRow(groupShape(2, 4), L("نسخة سطح المكتب"), null, { onDesktop() }, enabled = hasPage,
+                            trailing = { Switch(checked = tab.desktop, onCheckedChange = null) }) { IconCircle { Icon(Icons.Default.Build, null) } }
+                        ListRow(groupShape(3, 4), L("أدوات الصفحة"), L("ترجمة • طباعة • وضع القراءة • نسخ"), { tools = true }, enabled = hasPage,
+                            trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) }) { IconCircle { Icon(Icons.Default.Menu, null) } }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RoundBtn(onClick = { tools = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, L("رجوع")) }
+                        Spacer(Modifier.width(8.dp))
+                        Text(L("أدوات الصفحة"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QuickTile(L("الأعلى"), Icons.Default.KeyboardArrowUp, hasPage) { act { tab.webView?.let { WebSupport.scroll(it, true) } } }
+                        QuickTile(L("الأسفل"), Icons.Default.KeyboardArrowDown, hasPage) { act { tab.webView?.let { WebSupport.scroll(it, false) } } }
+                        QuickTile(L("وضع القراءة"), Icons.Default.Menu, hasPage) { act { tab.webView?.let { WebSupport.reader(it) } } }
+                        QuickTile(L("تحديث كامل"), Icons.Default.Refresh, hasPage) { act { tab.webView?.let { WebSupport.hardReload(it) } } }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        QuickTile(L("إخفاء العائم"), Icons.Default.Close, hasPage) { act { tab.webView?.let { WebSupport.toggleFloating(it) } } }
+                        QuickTile(L("الصور"), Icons.Default.Info, hasPage) { act { tab.webView?.let { WebSupport.toggleImages(it) } } }
+                        QuickTile(L("إبقاء الشاشة"), Icons.Default.Star, hasPage) { act { tab.webView?.let { WebSupport.toggleKeepOn(it) } } }
+                        QuickTile(L("نسخ النص"), Icons.Default.Edit, hasPage) { act { tab.webView?.let { WebSupport.copyPageText(it) } } }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        ListRow(groupShape(0, 4), L("نسخ الرابط"), null, { act(onCopy) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Edit, null) } }
+                        ListRow(groupShape(1, 4), L("ترجمة الصفحة"), null, { act(onTranslate) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Share, null) } }
+                        ListRow(groupShape(2, 4), L("طباعة / حفظ PDF"), null, { act(onPrint) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Create, null) } }
+                        ListRow(groupShape(3, 4), L("فتح في Chrome"), null, { act(onCustomTab) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.ExitToApp, null) } }
+                    }
                 }
-                QuickTile(L("مشاركة"), Icons.Default.Share, hasPage) { act(onShare) }
-                QuickTile(L("نسخ"), Icons.Default.Edit, hasPage) { act(onCopy) }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickTile(L("الأعلى"), Icons.Default.KeyboardArrowUp, hasPage) { act { tab.webView?.let { WebSupport.scroll(it, true) } } }
-                QuickTile(L("الأسفل"), Icons.Default.KeyboardArrowDown, hasPage) { act { tab.webView?.let { WebSupport.scroll(it, false) } } }
-                QuickTile(L("وضع القراءة"), Icons.Default.Menu, hasPage) { act { tab.webView?.let { WebSupport.reader(it) } } }
-                QuickTile(L("تحديث كامل"), Icons.Default.Refresh, hasPage) { act { tab.webView?.let { WebSupport.hardReload(it) } } }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickTile(L("إخفاء العائم"), Icons.Default.Close, hasPage) { act { tab.webView?.let { WebSupport.toggleFloating(it) } } }
-                QuickTile(L("الصور"), Icons.Default.Info, hasPage) { act { tab.webView?.let { WebSupport.toggleImages(it) } } }
-                QuickTile(L("إبقاء الشاشة"), Icons.Default.Star, hasPage) { act { tab.webView?.let { WebSupport.toggleKeepOn(it) } } }
-                QuickTile(L("نسخ النص"), Icons.Default.Edit, hasPage) { act { tab.webView?.let { WebSupport.copyPageText(it) } } }
-            }
-            Spacer(Modifier.height(16.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                ListRow(groupShape(0, 6), L("تبويب جديد"), null, { act(onNewTab) }) { IconCircle { Icon(Icons.Default.Add, null) } }
-                ListRow(groupShape(1, 6), L("بحث في الصفحة"), null, { act(onFind) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Search, null) } }
-                ListRow(groupShape(2, 6), L("ترجمة الصفحة"), null, { act(onTranslate) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Share, null) } }
-                ListRow(groupShape(3, 6), L("طباعة / حفظ PDF"), null, { act(onPrint) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.Create, null) } }
-                ListRow(groupShape(4, 6), L("فتح في Chrome"), null, { act(onCustomTab) }, enabled = hasPage) { IconCircle { Icon(Icons.Default.ExitToApp, null) } }
-                ListRow(groupShape(5, 6), L("نسخة سطح المكتب"), null, { onDesktop() }, enabled = hasPage,
-                    trailing = { Switch(checked = tab.desktop, onCheckedChange = null) }) { IconCircle { Icon(Icons.Default.Build, null) } }
-            }
-            Spacer(Modifier.height(16.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                val ctx = androidx.compose.ui.platform.LocalContext.current
-                val marked = hasPage && Library.isBookmarked(tab.url)
-                ListRow(groupShape(0, 5), if (marked) L("إزالة من المفضلة") else L("إضافة إلى المفضلة"), null, {
-                    act { toast(ctx, if (Library.toggleBookmark(tab.url, tab.title)) L("أُضيفت إلى المفضلة") else L("أُزيلت من المفضلة")) }
-                }, enabled = hasPage) { IconCircle { Icon(if (marked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null) } }
-                ListRow(groupShape(1, 5), L("المكتبة"), L("المفضلة") + " • " + L("السجل"), { act { openPanel(ctx as android.app.Activity, "library") } }) { IconCircle { Icon(Icons.Default.Star, null) } }
-                ListRow(groupShape(2, 5), L("التنزيلات"), null, { act(onDownloads) }) { IconCircle { Icon(Icons.Default.KeyboardArrowDown, null) } }
-                ListRow(groupShape(3, 5), L("الإعدادات"), null, { act(onSettings) }) { IconCircle { Icon(Icons.Default.Settings, null) } }
-                ListRow(groupShape(4, 5), L("الرئيسية"), null, { act(onHome) }) { IconCircle { Icon(Icons.Default.Home, null) } }
             }
         }
     }

@@ -82,7 +82,8 @@ private fun PanelHost(kind: String, close: () -> Unit) {
             onBack = close,
             onClearData = { PanelBus.clearData?.invoke() ?: clearDataGlobal() },
             onClearCache = { PanelBus.clearCache?.invoke() },
-            onPasswords = { passwords = true }
+            onPasswords = { passwords = true },
+            overlayOpen = passwords || libShow
         ) else if (kind == "passwords" || kind == "library") {
             // فتح مباشر لكلمات المرور/المكتبة: خلفية فارغة تحتها
             Box(Modifier.fillMaxSize())

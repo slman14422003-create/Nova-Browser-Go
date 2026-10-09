@@ -39,6 +39,9 @@ import java.util.WeakHashMap
 object YtWeb {
     private val views: MutableSet<WebView> = Collections.newSetFromMap(WeakHashMap<WebView, Boolean>())
 
+    /** صحيح أثناء النافذة المنبثقة: كل عمليات الإنعاش/إعادة القياس المؤجّلة تتوقف كي لا تُفسد عرض المنبثقة (سبب التقطيع والصفحة الكاملة المصغّرة). */
+    @Volatile var pip = false
+
     /** صفحات تبقى داخل الـ WebView المخصّص بجانب يوتيوب نفسه: الدخول بحساب Google والموافقة. */
     private val authHosts = setOf("accounts.google.com", "consent.google.com", "accounts.youtube.com", "consent.youtube.com")
 
@@ -216,6 +219,7 @@ object YtWeb {
     fun recover(w: WebView?, rebind: Boolean = false) {
         w ?: return
         for (d in longArrayOf(0L, 500L, 1200L)) w.postDelayed({
+            if (pip) return@postDelayed   // دخل المستخدم المنبثقة قبل انتهاء الإنعاش: لا نتراجع عن أنماطها
             w.resumeTimers(); w.onResume(); w.requestLayout(); w.invalidate()
             w.evaluateJavascript("window.__novaPip&&window.__novaPip(false);window.dispatchEvent(new Event('resize'))", null)
             if (rebind && d == 500L && !YtMedia.playing && w.visibility == View.VISIBLE && w.isShown) {   // الإخفاء يفرّغ الفيديو الجاري: لا نفعله أثناء التشغيل
@@ -231,14 +235,55 @@ object YtWeb {
      */
     fun afterFullscreen(w: WebView?) {
         w ?: return
+        // سطح الفيديو يبقى أسود بعد إزالة عرض ملء الشاشة: نُعيد ربطه بإخفاء/إظهار قصير. الصفحة تعدّ نفسها ظاهرة (الحماية فعّالة)
+        // فلا تُفرّغ المصدر ولا توقف التشغيل كما كان يحدث دون الحماية.
+        w.postDelayed({
+            if (!pip && owns(w) && w.isShown) { w.visibility = View.INVISIBLE; w.post { w.visibility = View.VISIBLE; w.invalidate() } }
+        }, 200L)
         for (d in longArrayOf(0L, 350L, 800L, 1500L)) w.postDelayed({
+            if (pip) return@postDelayed
             w.requestLayout(); w.invalidate()
             w.evaluateJavascript("window.__novaRefit&&window.__novaRefit(${d >= 800L})", null)
         }, d)
+        heal(w)
+    }
+
+    /** يدخل ملء الشاشة: نخبر الصفحة أنها «ظاهرة» كي لا تُفرّغ مصدر الفيديو لحظة الدوران (سبب الشاشة السوداء). */
+    fun onFullscreen(w: WebView?, on: Boolean) {
+        w ?: return
+        if (!Prefs.ytBg) return
+        if (on) w.evaluateJavascript("window.__novaBg&&window.__novaBg(true)", null)
+        else w.postDelayed({ background(w, false) }, 1300)   // الحماية تبقى فعّالة أثناء إعادة ربط السطح أدناه
+    }
+
+    /**
+     * فحص ذاتي بعد الدوران/الخروج من ملء الشاشة: إن فقد المشغّل مصدره يُعاد تحميله من نفس الثانية، وإن بقي أسود فتُعاد الصفحة بنفس الموضع.
+     * المراحل: 1.2ث (إنعاش)، 3ث (إعادة تحميل المشغّل)، 6ث (إعادة فتح الصفحة كحل أخير).
+     */
+    @Volatile private var healGen = 0
+    fun heal(w: WebView?) {
+        w ?: return
+        val g = ++healGen   // استدعاءات متتابعة (دوران + خروج من ملء الشاشة) تُدمج في فحص واحد
+        for ((i, d) in longArrayOf(1200L, 3000L, 6000L).withIndex()) w.postDelayed({
+            if (g == healGen && !pip && owns(w)) w.evaluateJavascript("window.__novaHeal&&window.__novaHeal(${i})") { r -> if (r != null && r.length > 2) YtLog.add("heal#$i -> $r") }
+        }, d)
+    }
+
+    /** بعد تدوير الشاشة: يوتيوب يترك مقاسات قديمة على الفيديو، فنعيد التخطيط ونطلب إعادة القياس على مراحل. */
+    fun afterRotate(w: WebView?) {
+        w ?: return
+        if (pip) return
+        for (d in longArrayOf(150L, 500L, 1000L, 1800L)) w.postDelayed({
+            if (pip) return@postDelayed
+            w.requestLayout(); w.invalidate()
+            w.evaluateJavascript("window.__novaRefit&&window.__novaRefit(${d >= 1000L})", null)
+        }, d)
+        heal(w)
     }
 
     /** دخول/خروج النافذة المنبثقة. */
     fun onPip(w: WebView?, inPip: Boolean, fullscreen: Boolean) {
+        pip = inPip
         w ?: return
         if (inPip) {
             w.resumeTimers(); w.onResume()

@@ -76,25 +76,16 @@ object PasswordBridge {
 @Composable
 fun SavePasswordDialog(p: PendingSave, onSave: () -> Unit, onNever: () -> Unit, onDismiss: () -> Unit) {
     val upd = p.kind == SaveKind.UPDATE
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (upd) L("تحديث كلمة المرور؟") else L("حفظ كلمة المرور؟")) },
-        text = {
-            Column {
-                Text(p.host, fontWeight = FontWeight.Bold)
-                if (p.user.isNotBlank()) Text(p.user)
-                Spacer(Modifier.height(8.dp))
-                Text(L("تُخزَّن مشفّرة على جهازك فقط."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        confirmButton = { TextButton(onClick = onSave) { Text(if (upd) L("تحديث") else L("حفظ")) } },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onNever) { Text(L("عدم الحفظ لهذا الموقع")) }
-                TextButton(onClick = onDismiss) { Text(L("ليس الآن")) }
-            }
-        }
-    )
+    NovaDialog(
+        title = if (upd) L("تحديث كلمة المرور؟") else L("حفظ كلمة المرور؟"), icon = Icons.Default.Lock, onDismiss = onDismiss,
+        confirmText = if (upd) L("تحديث") else L("حفظ"), onConfirm = onSave,
+        dismissText = L("ليس الآن"), onDismissClick = onDismiss,
+        extraAction = { TextButton(onClick = onNever) { Text(L("عدم الحفظ لهذا الموقع")) } }
+    ) {
+        Text(p.host, fontWeight = FontWeight.Bold)
+        if (p.user.isNotBlank()) Text(p.user)
+        DialogText(L("تُخزَّن مشفّرة على جهازك فقط."))
+    }
 }
 
 @Composable
@@ -155,7 +146,7 @@ fun PasswordsScreen(onBack: () -> Unit) {
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
                     itemsIndexed(list, key = { _, c -> c.id }) { i, c ->
-                        ListRow(groupShape(i, list.size), c.host, c.user.ifBlank { "—" }, { sel = c; revealed = false }) {
+                        ListRow(groupShape(i, list.size), c.host, c.user.ifBlank { "—" }, { sel = c; revealed = false }, modifier = Modifier.animateItem()) {
                             IconCircle { Icon(Icons.Default.Lock, null) }
                         }
                     }
@@ -165,9 +156,9 @@ fun PasswordsScreen(onBack: () -> Unit) {
     }
 
     sel?.let { c ->
-        AlertDialog(
-            onDismissRequest = { sel = null }, title = { Text(c.host) },
-            text = {
+        NovaDialog(
+            title = c.host, icon = Icons.Default.Lock, onDismiss = { sel = null }, dismissText = L("إغلاق")
+        ) {
                 Column {
                     Text(L("اسم المستخدم"), style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
                     Text(c.user.ifBlank { "—" })
@@ -179,7 +170,7 @@ fun PasswordsScreen(onBack: () -> Unit) {
                         TextButton(onClick = {
                             if (revealed) revealed = false else Auth.run(activity, L("تأكيد الهوية")) { revealed = true }
                         }) { Text(if (revealed) L("إخفاء") else L("إظهار")) }
-                        TextButton(onClick = { Auth.run(activity, L("تأكيد الهوية")) { copyText(activity, c.pass) } }) { Text(L("نسخ كلمة المرور")) }
+                        TextButton(onClick = { Auth.run(activity, L("تأكيد الهوية")) { copyText(activity, c.pass, sensitive = true) } }) { Text(L("نسخ كلمة المرور")) }
                     }
                     Row {
                         TextButton(onClick = { copyText(activity, c.user) }) { Text(L("نسخ المستخدم")) }
@@ -187,28 +178,25 @@ fun PasswordsScreen(onBack: () -> Unit) {
                         TextButton(onClick = { confirmDel = c }) { Text(L("حذف")) }
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = { sel = null }) { Text(L("إغلاق")) } }
-        )
+        }
     }
 
     confirmDel?.let { c ->
-        AlertDialog(
-            onDismissRequest = { confirmDel = null }, title = { Text(L("حذف كلمة المرور؟")) },
-            text = { Text(c.host + (if (c.user.isNotBlank()) " — " + c.user else "")) },
-            confirmButton = { TextButton(onClick = { Vault.delete(c.id); confirmDel = null; sel = null }) { Text(L("حذف")) } },
-            dismissButton = { TextButton(onClick = { confirmDel = null }) { Text(L("إلغاء")) } }
-        )
+        NovaDialog(
+            title = L("حذف كلمة المرور؟"), icon = Icons.Default.Delete, danger = true, onDismiss = { confirmDel = null },
+            confirmText = L("حذف"), onConfirm = { Vault.delete(c.id); confirmDel = null; sel = null }, dismissText = L("إلغاء")
+        ) { DialogText(c.host + (if (c.user.isNotBlank()) " — " + c.user else "")) }
     }
 
     edit?.let { e ->
         var host by remember(e) { mutableStateOf(e.host) }
         var user by remember(e) { mutableStateOf(e.user) }
         var pass by remember(e) { mutableStateOf(e.pass) }
-        AlertDialog(
-            onDismissRequest = { edit = null },
-            title = { Text(if (e.id.isEmpty()) L("إضافة كلمة مرور") else L("تعديل")) },
-            text = {
+        NovaDialog(
+            title = if (e.id.isEmpty()) L("إضافة كلمة مرور") else L("تعديل"), icon = Icons.Default.Lock, onDismiss = { edit = null },
+            confirmText = L("حفظ"), dismissText = L("إلغاء"),
+            onConfirm = { if (Vault.cleanHost(host).isNotBlank() && pass.isNotEmpty()) { Vault.upsert(e.id, Vault.cleanHost(host), user.trim(), pass); edit = null } }
+        ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(host, { host = it }, singleLine = true, label = { Text(L("الموقع (مثال: example.com)")) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
@@ -217,14 +205,6 @@ fun PasswordsScreen(onBack: () -> Unit) {
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = Vault.cleanHost(host).isNotBlank() && pass.isNotEmpty(),
-                    onClick = { Vault.upsert(e.id, Vault.cleanHost(host), user.trim(), pass); edit = null }
-                ) { Text(L("حفظ")) }
-            },
-            dismissButton = { TextButton(onClick = { edit = null }) { Text(L("إلغاء")) } }
-        )
+        }
     }
 }

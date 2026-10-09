@@ -3,16 +3,13 @@ package com.nova.browser
 import android.app.NotificationManager
 import android.app.Notification
 import android.app.PendingIntent
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.system.Os
 import android.webkit.CookieManager
 import android.webkit.URLUtil
@@ -90,14 +87,16 @@ object Downloader {
 
     @Volatile private var engineOn = false
 
+    /** مهام معالجة بعد التنزيل (دمج/تحويل): تُبقي خدمة الإشعار حيّة كي لا يختفي الإشعار وتُقتل العملية أثناء الدمج. */
+    val work = AtomicInteger(0)
+
     /** تشغيل كسول لمحرك التنزيل: قنوات الإشعارات ومؤقّت التقدّم (كل 400ms) لا يعملان إلا حين يبدأ تنزيل فعلي. */
     @Synchronized
     fun ensureEngine() {
         if (engineOn) return
         engineOn = true
         System.setProperty("http.maxConnections", "32")
-        Notif.channel(app, "dl", L("التنزيلات الجارية"), NotificationManager.IMPORTANCE_LOW)
-        Notif.channel(app, "done", L("اكتمال التنزيل"), NotificationManager.IMPORTANCE_DEFAULT)
+        Notif.ensureChannels(app)
         Executors.newSingleThreadScheduledExecutor()
             .scheduleWithFixedDelay({ runCatching { tick() } }, 400, 400, TimeUnit.MILLISECONDS)
     }
@@ -381,23 +380,47 @@ object Downloader {
         t.downloaded = t.total; t.segSnap = emptyList(); t.status = DONE
         save()
         val cb = t.onDone
-        if (cb == null) notifyDone(t) else pool.execute { runCatching { cb(t) } }
+        if (cb == null) notifyDone(t)
+        else { work.incrementAndGet(); pool.execute { try { runCatching { cb(t) } } finally { work.decrementAndGet() } } }
     }
 
+    private fun notifId(t: DlTask) = 100 + (t.id.hashCode() and 0x3fffffff) % 100000
+
     private fun notifyDone(t: DlTask) {
+        if (!Prefs.notifDone || !Notif.enabled(app)) return
         ensureEngine()
         runCatching {
             val i = Intent(Intent.ACTION_VIEW).setDataAndType(t.uri?.let { Storage.shareUri(app, it) }, t.mime.ifBlank { "*/*" }).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            val pi = PendingIntent.getActivity(app, t.id.hashCode(), i, PendingIntent.FLAG_IMMUTABLE)
+            val pi = PendingIntent.getActivity(app, notifId(t), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             app.getSystemService(NotificationManager::class.java).notify(
-                t.id.hashCode(),
-                Notif.builder(app, "done").setSmallIcon(android.R.drawable.stat_sys_download_done)
-                    .setContentTitle(L("اكتمل التنزيل")).setContentText(t.name).setContentIntent(pi).setAutoCancel(true).build()
+                notifId(t),
+                Notif.builder(app, Notif.CH_DONE).setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle(L("اكتمل التنزيل")).setContentText(t.name)
+                    .setCategory(Notification.CATEGORY_STATUS).setShowWhen(true).setWhen(System.currentTimeMillis())
+                    .setContentIntent(pi).setAutoCancel(true).build()
             )
         }
     }
 
-    private fun fail(t: DlTask, msg: String) { t.error = msg; t.status = FAILED; t.speed = 0; save() }
+    /** فشل التنزيل كان صامتاً تماماً: الآن إشعار يفتح قائمة التنزيلات لإعادة المحاولة. */
+    private fun notifyFail(t: DlTask) {
+        if (!Prefs.notifDone || !Notif.enabled(app)) return
+        ensureEngine()
+        runCatching {
+            val open = Intent(app, MainActivity::class.java).putExtra("dl", true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val pi = PendingIntent.getActivity(app, notifId(t), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            app.getSystemService(NotificationManager::class.java).notify(
+                notifId(t),
+                Notif.builder(app, Notif.CH_DONE).setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setContentTitle(L("فشل التنزيل")).setContentText(t.name)
+                    .setCategory(Notification.CATEGORY_ERROR)
+                    .setContentIntent(pi).setAutoCancel(true).build()
+            )
+        }
+    }
+
+    private fun fail(t: DlTask, msg: String) { t.error = msg; t.status = FAILED; t.speed = 0; save(); notifyFail(t) }
 
     private fun deleteFile(t: DlTask) { runCatching { t.uri?.let { Storage.delete(app, it) } } }
 

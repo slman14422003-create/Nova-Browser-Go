@@ -3,6 +3,7 @@ package com.nova.browser
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.app.PendingIntent
 import android.app.DownloadManager
 import android.content.*
 import android.content.pm.ActivityInfo
@@ -116,14 +117,79 @@ class MainActivity : ComponentActivity() {
     var fullscreenActive = false
     var wvProvider: () -> WebView? = { null }
 
+    private val PIP_PLAY = "nova.pip.play"
+    private val PIP_PAUSE = "nova.pip.pause"
+    private val PIP_BACK = "nova.pip.back"
+    private val PIP_FWD = "nova.pip.fwd"
+    private var pipExitAt = 0L          // لحظة الخروج من المنبثقة (لاكتشاف الإغلاق بزر ✕ حتى لو تأخر onStop)
+    private var pipPlayingShown: Boolean? = null
+    private var pipReceiverOn = false
+
+    /** أزرار التحكم داخل النافذة المنبثقة نفسها: رجوع/تشغيل-إيقاف/تقديم (لم تكن موجودة). */
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            when (i?.action) {
+                PIP_PLAY -> YtMedia.control("play")
+                PIP_PAUSE -> YtMedia.control("pause")
+                PIP_BACK -> YtMedia.control("back")
+                PIP_FWD -> YtMedia.control("fwd")
+            }
+            window.decorView.postDelayed({ refreshPip() }, 350)   // تبديل أيقونة التشغيل/الإيقاف بعد استجابة الصفحة
+        }
+    }
+
     // النافذة المنبثقة (Picture-in-Picture) من أندرويد 8؛ على أندرويد 6/7 تُهمل بصمت
+    /** isInPictureInPictureMode موجودة من أندرويد 7 والمنبثقة الفعلية من 8: لا نقرأها قبل ذلك كي لا يسقط التطبيق بـ NoSuchMethodError. */
+    private fun pipNowActive(): Boolean = Build.VERSION.SDK_INT >= 26 && isInPictureInPictureMode
+
     @android.annotation.TargetApi(26)
-    private fun pipParams(): android.app.PictureInPictureParams = android.app.PictureInPictureParams.Builder()
-        .setAspectRatio(android.util.Rational(16, 9))
-        .apply { if (Build.VERSION.SDK_INT >= 31) setAutoEnterEnabled(pipAuto) }
-        .build()
+    private fun pipAction(icon: Int, label: String, act: String, code: Int): android.app.RemoteAction {
+        val pi = PendingIntent.getBroadcast(this, code, Intent(act).setPackage(packageName), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return android.app.RemoteAction(android.graphics.drawable.Icon.createWithResource(this, icon), label, label, pi)
+    }
+
+    @android.annotation.TargetApi(26)
+    private fun pipParams(): android.app.PictureInPictureParams {
+        val hasVideo = YtMedia.owner != null
+        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9))
+        if (hasVideo) {
+            val playing = YtMedia.playing
+            pipPlayingShown = playing
+            b.setActions(listOf(
+                pipAction(android.R.drawable.ic_media_rew, L("رجوع 10 ثوانٍ"), PIP_BACK, 21),
+                if (playing) pipAction(android.R.drawable.ic_media_pause, L("إيقاف مؤقت"), PIP_PAUSE, 22)
+                else pipAction(android.R.drawable.ic_media_play, L("تشغيل"), PIP_PLAY, 23),
+                pipAction(android.R.drawable.ic_media_ff, L("تقديم 10 ثوانٍ"), PIP_FWD, 24)
+            ))
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.setAutoEnterEnabled(pipAuto).setSeamlessResizeEnabled(false)
+            if (hasVideo) b.setTitle(YtMedia.title.ifBlank { null }).setSubtitle(YtMedia.artist.ifBlank { null })
+        }
+        // انتقال أنعم: نحدّد مكان المشغّل في الصفحة ليتحوّل منه إطار المنبثقة
+        if (hasVideo && !fullscreenActive) runCatching {
+            val w = wvProvider()
+            val r = android.graphics.Rect()
+            if (w != null && w.getGlobalVisibleRect(r) && r.width() > 0) {
+                val hh = minOf(r.width() * 9 / 16, r.height())
+                if (hh > 0) b.setSourceRectHint(android.graphics.Rect(r.left, r.top, r.right, r.top + hh))
+            }
+        }
+        return b.build()
+    }
 
     fun refreshPip() { if (Build.VERSION.SDK_INT >= 26) runCatching { setPictureInPictureParams(pipParams()) } }
+
+    /** تُستدعى عند كل حالة تشغيل جديدة: نحدّث أزرار المنبثقة فقط عندما يتغيّر تشغيل/إيقاف. */
+    fun onYtPlayState() { if (pipPlayingShown != YtMedia.playing) refreshPip() }
+
+    override fun onStart() {
+        super.onStart()
+        if (!pipReceiverOn) {
+            val f = IntentFilter().apply { addAction(PIP_PLAY); addAction(PIP_PAUSE); addAction(PIP_BACK); addAction(PIP_FWD) }
+            pipReceiverOn = runCatching { ContextCompat.registerReceiver(this, pipReceiver, f, ContextCompat.RECEIVER_NOT_EXPORTED) }.isSuccess
+        }
+    }
 
     fun enterPip() {
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) runCatching { enterPictureInPictureMode(pipParams()) }
@@ -141,7 +207,22 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         DefaultBrowser.refresh(this)   // قد يغيّر المستخدم الافتراضي من إعدادات النظام
+        pipExitAt = 0L
+        inPip = pipNowActive()   // لا نترك الحالة عالقة إن فاتنا إشعار الخروج من المنبثقة
+        YtWeb.pip = inPip
         if (!inPip) { val w = wvProvider(); YtWeb.background(w, false); if (YtWeb.owns(w)) YtWeb.recover(w) }   // تنظيف أنماط المنبثقة إن بقيت
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val w = wvProvider()
+        // الدخول للمنبثقة يطلق تغيير الإعدادات قبل onPictureInPictureModeChanged: لا نعتبره دوراناً (كان يعيد قياس الفيديو ويُفسد المنبثقة)
+        val pipNow = inPip || pipNowActive()
+        if (pipNow) YtWeb.pip = true
+        if (YtWeb.owns(w)) {
+            YtLog.add("config orientation=" + newConfig.orientation + " fullscreen=" + fullscreenActive + " pip=" + pipNow)
+            if (!pipNow) YtWeb.afterRotate(w)
+        }
     }
 
     override fun onUserLeaveHint() {
@@ -152,7 +233,14 @@ class MainActivity : ComponentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip = isInPictureInPictureMode
+        YtWeb.pip = isInPictureInPictureMode
+        pipExitAt = if (isInPictureInPictureMode) 0L else android.os.SystemClock.elapsedRealtime()
         YtLog.add("native pip=$isInPictureInPictureMode fullscreen=$fullscreenActive")
+        if (isInPictureInPictureMode) refreshPip()
+        // الخروج من المنبثقة بلا عودة للواجهة = أُغلقت بزر ✕ (بعض الأجهزة لا تستدعي onStop فوراً): نتحقق بعد لحظة
+        if (!isInPictureInPictureMode) window.decorView.postDelayed({
+            if (!isFinishing && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) onPipDismissed()
+        }, 500)
         val w = wvProvider() ?: return
         if (YtWeb.owns(w)) YtWeb.onPip(w, isInPictureInPictureMode, fullscreenActive)
         else {
@@ -164,6 +252,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         enableEdgeToEdge()
         Prefs.init(this)
         GoogleAccounts.init(this)
@@ -178,8 +267,10 @@ class MainActivity : ComponentActivity() {
         WebSupport.init(this)
         Thread({ Security.deviceWarnings(applicationContext).forEach { Security.log(L("الجهاز"), it) } }, "nova-sec").start()
         Downloader.init(this)
+        Notif.ensureChannels(applicationContext)
         DefaultBrowser.refresh(this)
         initialized = true
+        if (intent?.getBooleanExtra("upd", false) == true) Updater.showPrompt()
         // لا نعيد فتح الرابط عند إعادة إنشاء الـ Activity (تدوير/استعادة العملية)
         val start = if (savedInstanceState == null) DefaultBrowser.urlFrom(intent) ?: "" else ""
         if (intent?.getBooleanExtra("dl", false) == true) dlTrigger++
@@ -213,15 +304,35 @@ class MainActivity : ComponentActivity() {
         // تسخين محرك الـ WebView عند أول فراغ، حتى لا يتقطع أول بحث
         android.os.Looper.myQueue().addIdleHandler { Perf.warmUp(applicationContext); if (!LowEnd.on) runCatching { WebView(applicationContext).destroy() }; false }
     }
+    private fun onPipDismissed() {
+        YtLog.add("native pip dismissed")
+        inPip = false
+        val w = wvProvider()
+        if (YtWeb.owns(w)) YtWeb.background(w, false)
+        YtMedia.stop(pause = true)   // إغلاق المنبثقة يوقف الفيديو ويزيل الإشعار
+    }
+
     override fun onStop() {
         super.onStop()
         Perf.flushCookies(true)
+        if (pipReceiverOn) { runCatching { unregisterReceiver(pipReceiver) }; pipReceiverOn = false }
+        // onPictureInPictureModeChanged(false) يسبق onStop دائماً، فـ inPip تكون false هنا؛ نعتمد على لحظة الخروج: إن أعقبه إيقاف بلا عودة = إغلاق ✕
+        val exited = pipExitAt != 0L && android.os.SystemClock.elapsedRealtime() - pipExitAt < 4000
+        if (exited && !isFinishing) { pipExitAt = 0L; onPipDismissed() }
+        else if (inPip && !pipNowActive()) onPipDismissed()
+    }
+
+    override fun onDestroy() {
+        // الخروج من التطبيق نهائياً: لا يبقى إشعار تشغيل لفيديو لم يعد له صفحة
+        if (isFinishing) YtMedia.stop()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra("dl", false)) dlTrigger++
+        if (intent.getBooleanExtra("upd", false)) Updater.showPrompt()
         DefaultBrowser.urlFrom(intent)?.let { incoming = ++incomingSeq to it }   // رابط من واتساب/تيليجرام… والتطبيق مفتوح
     }
 }
@@ -251,8 +362,11 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
     var pendingSave by remember { mutableStateOf<PendingSave?>(null) }
     var fillOffer by remember { mutableStateOf<FillOffer?>(null) }
     var ytUrl by remember { mutableStateOf<String?>(null) }
-    var askedNotif by remember { mutableStateOf(false) }
+    var notifPrompt by remember { mutableStateOf(false) }
     LaunchedEffect(dlTrigger) { if (dlTrigger > 0) openPanel(activity, "downloads") }
+    val notif = rememberNotifState { ok -> if (!ok) toast(activity, L("فعّل الإشعارات من الإعدادات لمتابعة التنزيل في الخلفية")) }
+    // يُعرض شرح الإذن مرة واحدة عند أول حاجة (تنزيل أو تشغيل في الخلفية)، ولا تتكرر الطلبات المتفرقة
+    val askNotif = { if (Notif.needsPermission && !Notif.enabled(activity) && !Prefs.notifAsked) { Prefs.pickNotifAsked(true); notifPrompt = true } }
     // أندرويد 6–9: حفظ التنزيلات في Download/Nova يحتاج إذن التخزين (نطلبه مرة واحدة؛ إن رُفض نحفظ في مجلد التطبيق)
     var askedStorage by remember { mutableStateOf(false) }
     var afterStorage by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -264,9 +378,6 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             askedStorage = true; afterStorage = block
             storageLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         } else block()
-    }
-    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (!ok) toast(activity, L("فعّل الإشعارات من الإعدادات لمتابعة التنزيل في الخلفية"))
     }
     var customView by remember { mutableStateOf<View?>(null) }
     var customCb by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
@@ -284,19 +395,32 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
     var sitePrompt by remember { mutableStateOf<SitePrompt?>(null) }
     var settingsMsg by remember { mutableStateOf<String?>(null) }
     val decisions = remember { mutableStateMapOf<String, Boolean>() }
-    var permCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // طابور طلبات الأذونات: كان callback واحد يُستبدل عند طلب ثانٍ فلا يُجاب طلب الموقع أبداً (تحميل الخرائط اللانهائي)
+    val permQueue = remember { ArrayList<Pair<List<String>, () -> Unit>>() }
+    val permCur = remember { arrayOfNulls<Pair<List<String>, () -> Unit>>(1) }
+    val permPump = remember { arrayOfNulls<() -> Unit>(1) }
     fun granted(p: String) = ContextCompat.checkSelfPermission(activity, p) == PackageManager.PERMISSION_GRANTED
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { m ->
-        val cb = permCallback; permCallback = null
+        val cur = permCur[0]; permCur[0] = null
         val denied = m.filter { !it.value }.keys
         if (denied.any { !ActivityCompat.shouldShowRequestPermissionRationale(activity, it) })
             settingsMsg = L("تم رفض الإذن بشكل دائم. فعّله من إعدادات التطبيق ليعمل هذا الموقع.")
-        cb?.invoke()
+        cur?.second?.invoke()
+        permPump[0]?.invoke()
     }
+    fun pumpPerms() {
+        if (permCur[0] != null || permQueue.isEmpty()) return
+        val next = permQueue.removeAt(0)
+        val need = next.first.filter { !granted(it) }
+        if (need.isEmpty()) { next.second(); pumpPerms(); return }
+        permCur[0] = next
+        runCatching { permLauncher.launch(need.toTypedArray()) }.onFailure { permCur[0] = null; next.second(); pumpPerms() }
+    }
+    permPump[0] = { pumpPerms() }
     fun askPerms(perms: List<String>, cb: () -> Unit) {
-        if (perms.all { granted(it) }) cb()
-        else { permCallback = cb; permLauncher.launch(perms.filter { !granted(it) }.toTypedArray()) }
+        if (perms.all { granted(it) }) cb() else { permQueue.add(perms to cb); pumpPerms() }
     }
+    val geoWaiters = remember { HashMap<String, MutableList<GeolocationPermissions.Callback>>() }
 
     // آخر التبويبات المغلقة (لإعادة فتحها من شاشة التبويبات)
     val closedTabs = remember { mutableStateListOf<Pair<String, String>>() }
@@ -468,6 +592,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             val inPipNow = (activity as? MainActivity)?.inPip == true
             if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 val ytLive = Prefs.ytBg && (YtMedia.owner != null || inPipNow)
+                if (!ytLive && customView == null) YtMedia.stop()   // الخلفية معطّلة: لا إشعار تشغيل بعد الخروج
                 if (ytLive) YtWeb.background(w, true)   // لا نجمّد الصفحة أثناء تشغيل يوتيوب
                 else if (Prefs.pauseBg && customView == null) { w?.onPause(); w?.pauseTimers() }
             } else if (e == androidx.lifecycle.Lifecycle.Event.ON_START) {
@@ -490,14 +615,16 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             permission = { req ->
                 activity.runOnUiThread {
                     val av = req.resources.filter { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
-                    if (av.isEmpty()) { req.deny(); return@runOnUiThread }
+                    // فيديو محمي (DRM/EME): كان يُرفض فيتعطّل التشغيل؛ هذا إذن معرّف الوسائط المحمية فقط وليس كاميرا ولا ميكروفون
+                    val prot = req.resources.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }.toTypedArray()
+                    if (av.isEmpty()) { if (prot.isNotEmpty()) req.grant(prot) else req.deny(); return@runOnUiThread }
                     fun perm(r: String) = if (r == PermissionRequest.RESOURCE_VIDEO_CAPTURE) Manifest.permission.CAMERA else Manifest.permission.RECORD_AUDIO
                     val label = av.joinToString(L(" و")) { if (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE) L("الكاميرا") else L("الميكروفون") }
                     fun finish(allow: Boolean) {
                         if (!allow) { req.deny(); return }
                         askPerms(av.map { perm(it) }) {
                             val ok = av.filter { granted(perm(it)) }.toTypedArray()
-                            if (ok.isEmpty()) req.deny() else req.grant(ok)
+                            if (ok.isEmpty() && prot.isEmpty()) req.deny() else req.grant(ok + prot)
                         }
                     }
                     val key = req.origin.toString() + "|av"
@@ -511,27 +638,38 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             },
             geo = { origin, cb ->
                 activity.runOnUiThread {
-                    fun finish(allow: Boolean) {
-                        if (!allow) { cb.invoke(origin, false, false); return }
-                        val perms = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        askPerms(perms) { cb.invoke(origin, perms.any { granted(it) }, false) }
-                    }
                     val key = origin + "|geo"
+                    val list = geoWaiters.getOrPut(key) { ArrayList() }
+                    list.add(cb)
+                    if (list.size > 1 && sitePrompt != null) return@runOnUiThread   // طلب مكرر والحوار ظاهر: يُجاب كل المنتظرين معاً
+                    fun done(allow: Boolean) {
+                        val cbs = geoWaiters.remove(key).orEmpty()
+                        if (!allow) { cbs.forEach { it.invoke(origin, false, false) }; return }
+                        val perms = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        askPerms(perms) { val ok = perms.any { granted(it) }; cbs.forEach { it.invoke(origin, ok, false) } }
+                    }
                     when (decisions[key]) {
-                        true -> finish(true)
-                        false -> cb.invoke(origin, false, false)
+                        true -> done(true)
+                        false -> done(false)
                         null -> sitePrompt = SitePrompt(L("السماح بالموقع؟"), ("" + (hostOf(origin)) + L(" يريد معرفة موقعك")),
-                            { decisions[key] = true; finish(true) }, { decisions[key] = false; finish(false) })
+                            { decisions[key] = true; done(true) }, { decisions[key] = false; done(false) })
                     }
                 }
             },
             openTab = { openInNewTab(it) },
-            showCustom = { v, cb -> customView = v; customCb = cb },
+            showCustom = { v, cb ->
+                if (customView != null && customView !== v) {   // عرض ملء شاشة جديد فوق قديم: نُعلم القديم بإخفائه كي لا يتسرّب
+                    customView?.let { (it.parent as? ViewGroup)?.removeView(it) }
+                    runCatching { customCb?.onCustomViewHidden() }
+                }
+                customView = v; customCb = cb
+                tabs.getOrNull(current)?.webView?.takeIf { YtWeb.owns(it) }?.let { YtWeb.onFullscreen(it, true) }
+            },
             hideCustom = {
                 // فصل عرض الفيديو صراحةً من حاويته ثم إنعاش المشغّل بعد الرجوع (كانت الشاشة تبقى سوداء)
                 customView?.let { v -> (v.parent as? ViewGroup)?.removeView(v) }
                 customView = null; customCb = null
-                tabs.getOrNull(current)?.webView?.takeIf { YtWeb.owns(it) }?.let { YtWeb.afterFullscreen(it) }
+                tabs.getOrNull(current)?.webView?.takeIf { YtWeb.owns(it) }?.let { YtWeb.onFullscreen(it, false); YtWeb.afterFullscreen(it) }
             },
             onLoginForm = { t, _, host ->
                 if (t === tabs.getOrNull(current)) {
@@ -548,26 +686,24 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                 }
             },
             onYtState = {
-                if (Build.VERSION.SDK_INT >= 33 && !askedNotif && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
-                    askedNotif = true; notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
+                askNotif()
+                (activity as? MainActivity)?.onYtPlayState()
             },
             onDownload = { u, ua, cd, mime, ref ->
                 if (!Shield.downloadAllowed(hostOf(ref ?: u))) toast(activity, L("تم حظر تنزيلات تلقائية متتابعة من الصفحة"))
                 else if (u.startsWith("blob:") || u.startsWith("data:")) toast(activity, L("هذا النوع من التنزيل غير مدعوم بعد"))
                 else {
                     val start = {
-                      withStorage {
-                        Downloader.start(activity, u, ua, cd, mime, ref)
-                        toast(activity, L("بدأ التنزيل — القائمة ⋮ ثم التنزيلات"))
-                        if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS))
-                            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                      }
+                        withStorage {
+                            Downloader.start(activity, u, ua, cd, mime, ref)
+                            toast(activity, L("بدأ التنزيل — القائمة ⋮ ثم التنزيلات"))
+                            askNotif()
+                        }
                         Unit
                     }
                     if (Security.isRiskyFile(u, cd)) {
                         Security.log(L("تنزيل"), (L("تحذير ملف تنفيذي من ") + (hostOf(u))))
-                        AlertDialog.Builder(activity).setTitle(L("ملف قد يكون خطيراً"))
+                        novaDialog(activity).setTitle(L("ملف قد يكون خطيراً"))
                             .setMessage((L("هذا النوع من الملفات (تطبيق/ملف تنفيذي) قد يضر بجهازك. نزّله فقط من مصدر تثق به.\n\n") + (hostOf(u))))
                             .setPositiveButton(L("تنزيل")) { _, _ -> start() }.setNegativeButton(L("إلغاء"), null).show()
                     } else start()
@@ -597,7 +733,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
     BackHandler(enabled = customView != null) {
         customView?.let { v -> (v.parent as? ViewGroup)?.removeView(v) }
         customCb?.onCustomViewHidden(); customView = null; customCb = null
-        tabs.getOrNull(current)?.webView?.takeIf { YtWeb.owns(it) }?.let { YtWeb.afterFullscreen(it) }
+        tabs.getOrNull(current)?.webView?.takeIf { YtWeb.owns(it) }?.let { YtWeb.onFullscreen(it, false); YtWeb.afterFullscreen(it) }
     }
 
     // ربط الـ Activity: مزوّد الـ WebView الحالي + تفعيل الدخول التلقائي للنافذة المنبثقة أثناء تشغيل فيديو يوتيوب
@@ -666,7 +802,12 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                                             tb.webView = w
                                             val sv = tb.saved; tb.saved = null
                                             val restored = sv != null && w.restoreState(sv) != null
-                                            if (!restored) w.loadUrl(tb.url, Perf.privacyHeaders)
+                                            if (!restored) {
+                                                if (tb.holdLoad) {   // انهارت العملية مراراً: صفحة بزر إعادة المحاولة بدل حلقة تحميل لا تنتهي
+                                                    tb.holdLoad = false
+                                                    w.loadDataWithBaseURL(tb.url, errorHtml(tb.url, L("تعطّلت عملية عرض الصفحة عدة مرات. أغلق تبويبات أخرى لتحرير الذاكرة ثم أعد المحاولة.")), "text/html", "UTF-8", tb.url)
+                                                } else w.loadUrl(tb.url, Perf.privacyHeaders)
+                                            }
                                         }
                                         (wv.parent as? ViewGroup)?.removeView(wv)
                                         wv.visibility = View.VISIBLE   // قد يكون أُخفي أثناء عرض شاشة التبويبات
@@ -676,7 +817,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                                         } else SwipeRefreshLayout(ctx).apply {
                                             addView(wv, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                                             setOnRefreshListener { wv.reload() }
-                                            setOnChildScrollUpCallback { _, _ -> wv.scrollY > 0 || wv.canScrollVertically(-1) || Pwa.kind(wv.url) != SiteKind.NONE }
+                                            setOnChildScrollUpCallback { _, _ -> wv.scrollY > 0 || wv.canScrollVertically(-1) || Pwa.kind(wv.url) != SiteKind.NONE || WebCompat.noPullRefresh(wv.url) }
                                             setColorSchemeColors(primaryInt)
                                             setProgressBackgroundColorSchemeColor(bgInt)
                                             useIosSpinner(spinnerInt)
@@ -749,17 +890,30 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             )
         }
         customView?.let { v ->
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
+            var pipTouch by remember(v) { mutableIntStateOf(0) }
+            var pipBtnShown by remember(v) { mutableStateOf(true) }
+            LaunchedEffect(pipTouch) { pipBtnShown = true; kotlinx.coroutines.delay(3500); pipBtnShown = false }
+            Box(
+                Modifier.fillMaxSize().background(Color.Black).pointerInput(v) {
+                    // نراقب اللمس دون استهلاكه: يظهر الزر مع أزرار يوتيوب ويختفي معها
+                    awaitPointerEventScope {
+                        while (true) {
+                            val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                            if (ev.changes.any { it.pressed && !it.previousPressed }) pipTouch++
+                        }
+                    }
+                }
+            ) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx -> FrameLayout(ctx).apply { setBackgroundColor(android.graphics.Color.BLACK); (v.parent as? ViewGroup)?.removeView(v); addView(v) } }
                 )
-                // زر النافذة المنبثقة فوق الفيديو في وضع ملء الشاشة (الأكثر موثوقية)
-                if (!inPip) Surface(
+                // زر النافذة المنبثقة: أعلى المنتصف (أزرار يوتيوب يميناً ويساراً فلا تداخل) ويختفي تلقائياً
+                if (!inPip && pipBtnShown) Surface(
                     onClick = { mainAct?.enterPip() }, shape = CircleShape, color = Color.Black.copy(alpha = 0.5f),
-                    modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)
+                    modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 10.dp)
                 ) {
-                    Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp), tint = Color.White); Spacer(Modifier.width(6.dp))
                         Text(L("منبثق"), style = MaterialTheme.typography.labelLarge, color = Color.White)
                     }
@@ -768,13 +922,16 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
         }
     }
 
+    if (notifPrompt) NotifPermissionDialog(
+        onAllow = { notifPrompt = false; notif.request() },
+        onLater = { notifPrompt = false }
+    )
     sitePrompt?.let { p ->
-        AlertDialog(
-            onDismissRequest = { sitePrompt = null; p.onDeny() },
-            title = { Text(p.title) }, text = { Text(p.message) },
-            confirmButton = { TextButton(onClick = { sitePrompt = null; p.onAllow() }) { Text(L("سماح")) } },
-            dismissButton = { TextButton(onClick = { sitePrompt = null; p.onDeny() }) { Text(L("رفض")) } }
-        )
+        NovaDialog(
+            title = p.title, icon = Icons.Default.Info, onDismiss = { sitePrompt = null; p.onDeny() },
+            confirmText = L("سماح"), onConfirm = { sitePrompt = null; p.onAllow() },
+            dismissText = L("رفض"), onDismissClick = { sitePrompt = null; p.onDeny() }
+        ) { DialogText(p.message) }
     }
     pendingSave?.let { p ->
         SavePasswordDialog(
@@ -787,20 +944,17 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
     LaunchedEffect(ytUrl) { if (ytUrl != null) withStorage { } }   // اطلب إذن التخزين قبل أن يختار المستخدم جودة التنزيل
     ytUrl?.let { u ->
         YtDownloadSheet(u, onDismiss = { ytUrl = null }, onStarted = {
-            if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            askNotif()
         })
     }
     settingsMsg?.let { m ->
-        AlertDialog(
-            onDismissRequest = { settingsMsg = null },
-            title = { Text(L("الإذن مطلوب")) }, text = { Text(m) },
-            confirmButton = {
-                TextButton(onClick = {
-                    settingsMsg = null
-                    activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null)))
-                }) { Text(L("فتح الإعدادات")) }
-            },
-            dismissButton = { TextButton(onClick = { settingsMsg = null }) { Text(L("لاحقاً")) } }
-        )
+        NovaDialog(
+            title = L("الإذن مطلوب"), icon = Icons.Default.Lock, onDismiss = { settingsMsg = null },
+            confirmText = L("فتح الإعدادات"), dismissText = L("لاحقاً"),
+            onConfirm = {
+                settingsMsg = null
+                activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null)))
+            }
+        ) { DialogText(m) }
     }
 }

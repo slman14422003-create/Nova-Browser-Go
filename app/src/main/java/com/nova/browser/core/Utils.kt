@@ -110,9 +110,24 @@ fun hostOf(u: String): String = runCatching { java.net.URI(u).host?.removePrefix
 
 fun toast(c: Context, m: String) = Toast.makeText(c, m, Toast.LENGTH_SHORT).show()
 
-fun copyText(c: Context, t: String) {
-    (c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("url", t))
+/**
+ * نسخ إلى الحافظة. sensitive=true (كلمات المرور): يُعلَّم المحتوى حساساً فلا يظهر في معاينة الحافظة ولا في سجل لوحة المفاتيح،
+ * ويُمسح تلقائياً بعد 30 ثانية إن بقي كما هو (كان يبقى نصاً صريحاً تقرؤه أي لوحة مفاتيح/تطبيق مراقب للحافظة).
+ */
+fun copyText(c: Context, t: String, sensitive: Boolean = false) {
+    val cm = c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newPlainText("url", t)
+    if (sensitive && android.os.Build.VERSION.SDK_INT >= 24) runCatching {   // ClipDescription.setExtras من أندرويد 7
+        clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+    }
+    cm.setPrimaryClip(clip)
     toast(c, L("تم النسخ"))
+    if (sensitive) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        runCatching {
+            val cur = cm.primaryClip?.getItemAt(0)?.text?.toString()
+            if (cur == null || cur == t) cm.clearPrimaryClip()
+        }
+    }, 30_000)
 }
 
 fun shareText(c: Context, t: String) {
@@ -120,8 +135,18 @@ fun shareText(c: Context, t: String) {
     c.startActivity(Intent.createChooser(i, null))
 }
 
+/** منشئ حوار أصلي بهوية Nova (حواف مدوّرة وألوان التطبيق) بدل شكل النظام الافتراضي. */
+fun novaDialog(c: Context): AlertDialog.Builder {
+    val dark = when (Prefs.theme) {
+        1 -> false
+        2 -> true
+        else -> (c.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    }
+    return AlertDialog.Builder(android.view.ContextThemeWrapper(c, if (dark) R.style.Theme_Nova_Dialog_Dark else R.style.Theme_Nova_Dialog_Light))
+}
+
 fun choose(c: Context, items: List<Pair<String, () -> Unit>>) {
-    AlertDialog.Builder(c).setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }.show()
+    novaDialog(c).setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }.show()
 }
 
 fun errorHtml(url: String, desc: String): String {

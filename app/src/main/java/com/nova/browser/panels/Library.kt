@@ -5,9 +5,11 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -85,13 +88,21 @@ object Library {
     fun removeBookmark(b: Bookmark) { bookmarks.remove(b); scheduleSave() }
     fun removeHistory(h: HistoryItem) { history.remove(h); scheduleSave() }
     fun clearHistory() { history.clear(); scheduleSave() }
+    fun clearHistorySince(since: Long) { history.removeAll { it.time >= since }; scheduleSave() }
 
     /** تسجيل زيارة صفحة (يُستدعى بعد اكتمال التحميل). */
     fun visit(url: String, title: String?) {
         if (!url.startsWith("http") || !loaded) return
-        val top = history.firstOrNull()
-        if (top != null && top.url == url) return
-        history.add(0, HistoryItem(url, title?.takeIf { it.isNotBlank() } ?: url, System.currentTimeMillis()))
+        // نفس الصفحة خلال 30 دقيقة (إعادة تحميل، تدوير الشاشة، تنقّل داخل يوتيوب…) تُحدَّث بدل أن تتكرر
+        val now = System.currentTimeMillis()
+        var old: HistoryItem? = null
+        var i = 0
+        while (i < history.size && now - history[i].time < 30 * 60 * 1000L) {
+            if (history[i].url == url) { old = history.removeAt(i); break }
+            i++
+        }
+        val t = title?.takeIf { it.isNotBlank() } ?: old?.title ?: url
+        history.add(0, HistoryItem(url, t, now))
         while (history.size > MAX_HISTORY) history.removeAt(history.lastIndex)
         scheduleSave()
     }
@@ -146,52 +157,57 @@ fun LibraryScreen(onBack: () -> Unit, onOpen: (String) -> Unit) {
     val q = query.trim()
     val bms = Library.bookmarks.filter { q.isBlank() || it.title.contains(q, true) || it.url.contains(q, true) || it.folder.contains(q, true) }
     val hs = Library.history.filter { q.isBlank() || it.title.contains(q, true) || it.url.contains(q, true) }
+    val rows = if (tab == 1) buildRows(hs.take(1000)) else emptyList()
+    val timeFmt = remember { java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT) }
 
     Surface(Modifier.fillMaxSize(), color = cs.background) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundBtn(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, L("رجوع")) }
-                Spacer(Modifier.width(8.dp))
-                Text(L("المكتبة"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                RoundBtn(onClick = { help = true }) { Icon(Icons.Default.KeyboardArrowDown, L("استيراد من كروم")) }
+            PanelTopBar(L("المكتبة"), Library.bookmarks.size.toString() + " " + L("المفضلة") + " • " + Library.history.size + " " + L("السجل"), onBack) {
+                PanelMenu { close ->
+                    DropdownMenuItem(text = { Text(L("استيراد من كروم")) }, leadingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) }, onClick = { close(); help = true })
+                    if (Library.history.isNotEmpty()) DropdownMenuItem(text = { Text(L("مسح السجل")) }, leadingIcon = { Icon(Icons.Default.Delete, null) }, onClick = { close(); confirmClear = true })
+                }
             }
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text(L("المفضلة") + " (${Library.bookmarks.size})") })
-                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text(L("السجل") + " (${Library.history.size})") })
-            }
-            OutlinedTextField(
-                value = query, onValueChange = { query = it }, singleLine = true,
-                placeholder = { Text(L("بحث")) }, leadingIcon = { Icon(Icons.Default.Search, null) },
-                shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-            )
+            PanelSegments(listOf(L("المفضلة") + " (${Library.bookmarks.size})", L("السجل") + " (${Library.history.size})"), tab) { tab = it }
+            PanelSearch(query, { query = it }, L("بحث"))
             if (importing) NovaLoadingRow(L("جارٍ الاستيراد…"))
             val empty = if (tab == 0) bms.isEmpty() else hs.isEmpty()
-            if (empty) {
-                Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text(if (tab == 0) L("لا توجد مفضلة بعد") else L("السجل فارغ"), color = cs.onSurfaceVariant)
-                }
+            val emptyMod = Modifier.weight(1f).fillMaxWidth()
+            if (empty && q.isNotBlank()) {
+                PanelEmpty(Icons.Default.Search, L("لا نتائج"), modifier = emptyMod)
+            } else if (empty && tab == 0) {
+                PanelEmpty(Icons.Default.FavoriteBorder, L("لا توجد مفضلة بعد"), L("اضغط «المفضلة» في قائمة الخيارات لحفظ الصفحة هنا"), emptyMod)
+            } else if (empty) {
+                PanelEmpty(Icons.Default.Refresh, L("السجل فارغ"), L("الصفحات التي تزورها تظهر هنا"), emptyMod)
             } else if (tab == 0) {
                 LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                     itemsIndexed(bms, key = { i, b -> b.url + i }) { i, b ->
                         ListRow(groupShape(i, bms.size), b.title, if (b.folder.isBlank()) hostOf(b.url) else b.folder + " • " + hostOf(b.url), { onOpen(b.url) },
-                            trailing = { IconButton(onClick = { Library.removeBookmark(b) }) { Icon(Icons.Default.Close, L("حذف")) } }) { IconCircle { Icon(Icons.Default.Star, null) } }
+                            trailing = { ItemMenu(b.url, b.title, false, { onOpen(b.url) }, { Library.removeBookmark(b) }) }) { SiteIcon(b.url, Icons.Default.Star) }
                     }
                 }
             } else {
-                LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
-                    itemsIndexed(hs.take(1000), key = { i, h -> h.url + h.time + i }) { i, h ->
-                        ListRow(groupShape(i, minOf(hs.size, 1000)), h.title, hostOf(h.url) + " • " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(h.time)), { onOpen(h.url) },
-                            trailing = { IconButton(onClick = { Library.removeHistory(h) }) { Icon(Icons.Default.Close, L("حذف")) } }) { IconCircle { Icon(Icons.Default.Refresh, null) } }
+                LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
+                    itemsIndexed(rows, key = { i, r -> if (r.header != null) "h" + r.header else "i$i" }) { _, r ->
+                        if (r.header != null) {
+                            Text(r.header, style = MaterialTheme.typography.titleSmall, color = cs.primary, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 8.dp, top = 18.dp, bottom = 6.dp))
+                        } else {
+                            val h = r.item!!
+                            ListRow(groupShape(r.idx, r.n), h.title, hostOf(h.url) + " • " + timeFmt.format(java.util.Date(h.time)), { onOpen(h.url) },
+                                trailing = { ItemMenu(h.url, h.title, true, { onOpen(h.url) }, { Library.removeHistory(h) }) }) { SiteIcon(h.url, Icons.Default.Refresh) }
+                        }
                     }
-                    item { TextButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth()) { Text(L("مسح السجل")) } }
                 }
             }
         }
     }
 
-    if (help) AlertDialog(
-        onDismissRequest = { help = false }, title = { Text(L("استيراد بيانات كروم")) },
-        text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+    if (help) NovaDialog(
+        title = L("استيراد بيانات كروم"), icon = Icons.Default.Info, onDismiss = { help = false },
+        confirmText = L("اختيار الملفات"), onConfirm = { help = false; picker.launch(arrayOf("*/*")) }, dismissText = L("إغلاق")
+    ) {
+        Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
             Text(L("أندرويد يمنع أي تطبيق من قراءة بيانات كروم مباشرة، لذلك يُستورد من ملفات يصدّرها كروم نفسه. اختر ملفاً أو عدة ملفات دفعة واحدة:"), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(10.dp))
             Text(L("• كلمات المرور: كروم ← الإعدادات ← مدير كلمات المرور ← تصدير (ملف CSV). احذف الملف بعد الاستيراد."), style = MaterialTheme.typography.bodySmall)
@@ -201,24 +217,92 @@ fun LibraryScreen(onBack: () -> Unit, onOpen: (String) -> Unit) {
             Text(L("• من كروم سطح المكتب: ملف Bookmarks.html (مدير الإشارات ← تصدير) أو ملفا Bookmarks وHistory من مجلد ملف التعريف."), style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
             Text(L("لا يمكن نقل الكوكيز وتبويبات كروم المفتوحة؛ كروم لا يصدّرها."), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-        } },
-        confirmButton = { TextButton(onClick = { help = false; picker.launch(arrayOf("*/*")) }) { Text(L("اختيار الملفات")) } },
-        dismissButton = { TextButton(onClick = { help = false }) { Text(L("إغلاق")) } }
-    )
+        }
+    }
 
     result?.let { r ->
-        AlertDialog(
-            onDismissRequest = { result = null }, title = { Text(L("اكتمل الاستيراد")) },
-            text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+        NovaDialog(
+            title = L("اكتمل الاستيراد"), icon = Icons.Default.Check, onDismiss = { result = null },
+            confirmText = L("إغلاق"), onConfirm = { result = null }, dismissText = null
+        ) {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                 Text(L("المفضلة") + ": ${r.bookmarks}\n" + L("السجل") + ": ${r.history}\n" + L("كلمات المرور") + ": ${r.passwords}\n" + L("متجاهَل") + ": ${r.skipped}")
                 if (r.notes.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(r.notes.joinToString("\n"), style = MaterialTheme.typography.bodySmall, color = cs.error) }
-            } },
-            confirmButton = { TextButton(onClick = { result = null }) { Text(L("إغلاق")) } }
-        )
+            }
+        }
     }
-    if (confirmClear) AlertDialog(
-        onDismissRequest = { confirmClear = false }, title = { Text(L("مسح السجل؟")) },
-        confirmButton = { TextButton(onClick = { Library.clearHistory(); confirmClear = false }) { Text(L("مسح")) } },
-        dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(L("إلغاء")) } }
-    )
+    if (confirmClear) {
+        val now = System.currentTimeMillis()
+        val midnight = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val opts = listOf(
+            L("آخر ساعة") to now - 3_600_000L, L("اليوم") to midnight,
+            L("آخر 7 أيام") to now - 7 * 86_400_000L, L("كل السجل") to 0L
+        )
+        NovaDialog(
+            title = L("مسح السجل"), icon = Icons.Default.Delete, danger = true, onDismiss = { confirmClear = false }, dismissText = L("إلغاء")
+        ) {
+            opts.forEach { (name, since) ->
+                Surface(
+                    onClick = { Library.clearHistorySince(since); confirmClear = false; toast(ctx, L("تم المسح")) },
+                    shape = RoundedCornerShape(16.dp), color = cs.surfaceContainerHighest.copy(alpha = 0.55f), modifier = Modifier.fillMaxWidth()
+                ) { Text(name, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), style = MaterialTheme.typography.bodyLarge) }
+            }
+        }
+    }
+}
+
+private class HRow(val header: String?, val item: HistoryItem?, val idx: Int, val n: Int)
+
+/** يجمع السجل تحت عناوين الأيام (اليوم / أمس / تاريخ) مع أشكال مجموعات متصلة داخل كل يوم. */
+private fun buildRows(list: List<HistoryItem>): List<HRow> {
+    val cal = java.util.Calendar.getInstance()
+    fun key(t: Long): Int { cal.timeInMillis = t; return cal.get(java.util.Calendar.YEAR) * 1000 + cal.get(java.util.Calendar.DAY_OF_YEAR) }
+    val nowT = System.currentTimeMillis()
+    val today = key(nowT); val yest = key(nowT - 86_400_000L)
+    val df = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+    val out = ArrayList<HRow>()
+    var i = 0
+    while (i < list.size) {
+        val k = key(list[i].time); var j = i
+        while (j < list.size && key(list[j].time) == k) j++
+        val label = when (k) { today -> L("اليوم"); yest -> L("أمس"); else -> df.format(java.util.Date(list[i].time)) }
+        out.add(HRow(label, null, 0, 0))
+        for (x in i until j) out.add(HRow(null, list[x], x - i, j - i))
+        i = j
+    }
+    return out
+}
+
+@Composable
+private fun SiteIcon(url: String, fallback: androidx.compose.ui.graphics.vector.ImageVector) {
+    val ver = Favicons.version
+    val bmp = remember(ver, url) { Favicons.get(hostOf(url)) }
+    IconCircle {
+        if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.size(22.dp)) else Icon(fallback, null)
+    }
+}
+
+@Composable
+private fun ItemMenu(url: String, title: String, showFav: Boolean, onOpen: () -> Unit, onDelete: () -> Unit) {
+    val ctx = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, L("المزيد")) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp)) {
+            DropdownMenuItem(text = { Text(L("فتح")) }, leadingIcon = { Icon(Icons.Default.ExitToApp, null) }, onClick = { open = false; onOpen() })
+            DropdownMenuItem(text = { Text(L("نسخ الرابط")) }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { open = false; copyText(ctx, url) })
+            DropdownMenuItem(text = { Text(L("مشاركة")) }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { open = false; shareText(ctx, url) })
+            if (showFav) {
+                val marked = Library.isBookmarked(url)
+                DropdownMenuItem(
+                    text = { Text(if (marked) L("إزالة من المفضلة") else L("إضافة إلى المفضلة")) },
+                    leadingIcon = { Icon(if (marked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null) },
+                    onClick = { open = false; toast(ctx, if (Library.toggleBookmark(url, title)) L("أُضيفت إلى المفضلة") else L("أُزيلت من المفضلة")) }
+                )
+            }
+            DropdownMenuItem(text = { Text(L("حذف")) }, leadingIcon = { Icon(Icons.Default.Delete, null) }, onClick = { open = false; onDelete() })
+        }
+    }
 }

@@ -31,12 +31,12 @@ object YtHub {
 
     private fun script(): String? {
         val r = raw ?: return null
-        val key = "${Prefs.ytBg}|${Prefs.ytResume}|${Prefs.ytKeepRate}|${Prefs.ytHold2x}|${Prefs.ytCcSize}|${Prefs.ytCcBg}|${Prefs.ytCcPos}|${Prefs.ytNoShorts}"
+        val key = "${Prefs.ytBg}|${Prefs.ytResume}|${Prefs.ytKeepRate}|${Prefs.ytHold2x}|${Prefs.ytCcSize}|${Prefs.ytCcBg}|${Prefs.ytCcPos}|${Prefs.ytNoShorts}|${Prefs.smoothAnim}|${Adaptive.level == 0}"
         if (built == null || builtKey != key) {
             built = r.replace("__BG__", Prefs.ytBg.toString())
                 .replace("__PLAY__", "{\"resume\":${Prefs.ytResume},\"keep\":${Prefs.ytKeepRate},\"hold\":${Prefs.ytHold2x}}")
                 .replace("__CC__", "{\"size\":\"${ccSize[Prefs.ytCcSize.coerceIn(0, 3)]}\",\"bg\":\"${ccBg[Prefs.ytCcBg.coerceIn(0, 2)]}\",\"pos\":\"${ccPos[Prefs.ytCcPos.coerceIn(0, 2)]}\",\"off\":0}")
-                .replace("__UI__", "{\"shorts\":${Prefs.ytNoShorts}}")
+                .replace("__UI__", "{\"shorts\":${Prefs.ytNoShorts},\"anim\":${Prefs.smoothAnim && Adaptive.level == 0}}")
             builtKey = key
         }
         return built

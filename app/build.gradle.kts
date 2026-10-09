@@ -25,8 +25,8 @@ android {
         applicationId = "com.nova.browser.go"
         minSdk = 23   // أندرويد 6.0 فما فوق
         targetSdk = 35
-        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("VERSION_NAME") ?: "1.0.0-go"
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10
+        versionName = System.getenv("VERSION_NAME") ?: "1.8.1-go"
         // مستودع التحديثات: يُملأ تلقائياً في GitHub Actions (owner/repo)، فارغ محلياً = التحديث معطّل
         buildConfigField("String", "UPDATE_REPO", "\"" + (System.getenv("GITHUB_REPOSITORY") ?: "") + "\"")
         vectorDrawables.useSupportLibrary = true
@@ -81,10 +81,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.animation:animation")
-    implementation("androidx.core:core-ktx:1.13.1")                  // ActivityManagerCompat/ServiceCompat/NotificationCompat… (توافق أندرويد 6 وGo)
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
-    implementation("androidx.webkit:webkit:1.12.1")             // حقن سكربت الحماية قبل الصفحة
+    implementation("androidx.core:core-ktx:1.13.1")                  // ActivityManagerCompat/ServiceCompat/NotificationManagerCompat… (توافق أندرويد 6 وGo)
+    implementation("androidx.webkit:webkit:1.16.0")             // حقن سكربت الحماية قبل الصفحة (1.16: أحدث مستقر، يدعم ميزات المحرك الجديدة)
     implementation("androidx.browser:browser:1.8.0")              // Chrome Custom Tabs لصفحات تسجيل الدخول الحساسة
     implementation("com.squareup.okhttp3:okhttp:4.12.0")           // شبكة HTTP/2 مع كاش وإعادة استخدام الاتصالات (اقتراحات البحث)
     implementation("androidx.profileinstaller:profileinstaller:1.4.1") // ملفات Baseline لتسريع بدء التشغيل وتقليل التقطيع

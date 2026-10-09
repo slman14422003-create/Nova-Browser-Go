@@ -39,9 +39,11 @@ object YtMedia {
     fun control(a: String) {
         val w = wvRef?.get() ?: return
         w.post {
-            // الصفحة قد تكون مجمّدة (onPause/pauseTimers) فنوقظها قبل تنفيذ الأمر
-            if (a != "pause") { w.resumeTimers(); w.onResume() }
-            w.evaluateJavascript("window.__novaYtCtl&&window.__novaYtCtl(${JSONObject.quote(a)})", null)
+            // الصفحة قد تكون مجمّدة (onPause/pauseTimers) فنوقظها قبل تنفيذ الأمر؛ وقد تكون دُمّرت: لا نُسقط التطبيق
+            runCatching {
+                if (a != "pause") { w.resumeTimers(); w.onResume() }
+                w.evaluateJavascript("window.__novaYtCtl&&window.__novaYtCtl(${JSONObject.quote(a)})", null)
+            }
         }
     }
 
@@ -76,7 +78,11 @@ object YtMedia {
         return h.endsWith("ytimg.com") || h.endsWith("ggpht.com") || h.endsWith("googleusercontent.com")
     }
 
-    fun stop() { playing = false; owner = null; MediaService.instance?.shutdown() }
+    /** يُنهي الإشعار والخدمة؛ pause=true يوقف الفيديو أيضاً (إغلاق النافذة المنبثقة). */
+    fun stop(pause: Boolean = false) {
+        if (pause) control("pause")
+        playing = false; owner = null; MediaService.instance?.shutdown()
+    }
     fun pageChanged(tab: BrowserTab, url: String) { if (owner === tab && !isYtVideo(url)) stop() }
     fun tabClosed(tab: BrowserTab) { if (owner === tab) stop() }
 }

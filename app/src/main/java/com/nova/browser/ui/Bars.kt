@@ -237,9 +237,10 @@ fun BottomPill(
 @Composable
 fun RoundBtn(onClick: () -> Unit, enabled: Boolean = true, content: @Composable () -> Unit) {
     val cs = MaterialTheme.colorScheme
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
-        Modifier.padding(horizontal = 2.dp).size(48.dp).clip(CircleShape).background(cs.surfaceContainerHigh)
-            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick),
+        Modifier.padding(horizontal = 2.dp).size(48.dp).pressScale(src, 0.9f).clip(CircleShape).background(cs.surfaceContainerHigh)
+            .clickable(interactionSource = src, indication = androidx.compose.foundation.LocalIndication.current, enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) { CompositionLocalProvider(LocalContentColor provides cs.onSurface) { content() } }
 }
@@ -268,12 +269,13 @@ fun IconCircle(content: @Composable () -> Unit) {
 @Composable
 fun ListRow(
     shape: RoundedCornerShape, title: String, sub: String?, onClick: () -> Unit,
-    enabled: Boolean = true, trailing: (@Composable () -> Unit)? = null, leading: @Composable () -> Unit
+    enabled: Boolean = true, trailing: (@Composable () -> Unit)? = null, modifier: Modifier = Modifier, leading: @Composable () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Surface(
-        onClick = onClick, enabled = enabled, shape = shape, color = cs.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.4f)
+        onClick = onClick, enabled = enabled, shape = shape, color = cs.surfaceContainerHigh, interactionSource = src,
+        modifier = modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.4f).pressScale(src, 0.985f)
     ) {
         Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             leading()

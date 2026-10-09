@@ -19,7 +19,9 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -255,6 +257,24 @@ object NovaMotion {
     val panelExit: ExitTransition
         get() = slideOutVertically(tween(Adaptive.ms(200), easing = emphasizedAccel)) { it / 14 } +
             fadeOut(tween(Adaptive.ms(150)))
+
+    /**
+     * انتقال «المحور المشترك» بين شاشة وأخرى داخل نفس اللوحة (الإعدادات ← قسم): الجديدة تنزلق قليلاً مع ظهور تدريجي والقديمة تتراجع.
+     * الاتجاه يتبع اللغة (العربية RTL: التقدّم نحو اليسار) ولا يتجاوز مسافة قصيرة كي لا يبدو ثقيلاً.
+     */
+    fun axisEnter(forward: Boolean): EnterTransition {
+        val s = (if (forward) 1 else -1) * (if (I18n.isEnglish()) 1 else -1)
+        return slideInHorizontally(tween(Adaptive.ms(320), easing = emphasized)) { s * it / 7 } +
+            fadeIn(tween(Adaptive.ms(240), delayMillis = Adaptive.ms(50), easing = LinearOutSlowInEasing))
+    }
+    fun axisExit(forward: Boolean): ExitTransition {
+        val s = (if (forward) -1 else 1) * (if (I18n.isEnglish()) 1 else -1)
+        return slideOutHorizontally(tween(Adaptive.ms(220), easing = emphasizedAccel)) { s * it / 10 } +
+            fadeOut(tween(Adaptive.ms(120)))
+    }
+
+    /** نابض ناعم لعناصر تتحرك بلمس المستخدم (قليل الارتداد، يستقر سريعاً). */
+    fun <T> softSpring() = spring<T>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
 
     /** الشريط العلوي: ينزل من الأعلى. */
     val barEnter: EnterTransition

@@ -59,7 +59,9 @@ object Updater {
             val installed = pm.getPackageInfo(c.packageName, flag)
             val mine = if (android.os.Build.VERSION.SDK_INT >= 28) installed.signingInfo?.apkContentsSigners else installed.signatures
             val theirs = if (android.os.Build.VERSION.SDK_INT >= 28) arch.signingInfo?.apkContentsSigners else arch.signatures
-            if (mine != null && theirs != null && mine.isNotEmpty() && theirs.isNotEmpty() && mine.none { m -> theirs.any { it == m } }) "signature mismatch" else null
+            // فشل مغلق: إن لم نستطع قراءة توقيع الملف المنزَّل نرفضه بدل قبوله (النظام يفحص عند التثبيت أيضاً لكنه خط دفاع ثانٍ)
+            if (theirs == null || theirs.isEmpty()) "signature unreadable"
+            else if (mine != null && mine.isNotEmpty() && mine.none { m -> theirs.any { it == m } }) "signature mismatch" else null
         }
     } catch (_: Throwable) { null }   // تعذّر الفحص المسبق: يبقى فحص النظام عند التثبيت
 
@@ -126,6 +128,7 @@ object Updater {
                         info = UpdateInfo(tag.removePrefix("v"), j.optString("body"), size, apk, j.optString("html_url"), sha)
                         phase = if (apkFile(app).exists() && apkFile(app).length() == size && size > 0) UpdPhase.READY else UpdPhase.AVAILABLE
                         prompt = true
+                        Notif.updateAvailable(app, info?.version ?: tag)
                     } else { info = null; phase = UpdPhase.UP_TO_DATE }
                 }
             } catch (e: Exception) {

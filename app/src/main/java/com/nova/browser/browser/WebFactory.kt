@@ -132,6 +132,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
     Shield.install(this)
     Perf.installSmooth(this)
     WebSupport.configure(this)
+    WebCompat.install(this)
     Pwa.install(this)
     PasswordBridge.install(this, tab, h)
     Wv.autofill(this, Prefs.pwMode == 1)
@@ -160,7 +161,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
     webViewClient = object : WebViewClient() {
         override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
             if (YtWeb.isYtUrl(u)) { v.post { YtWeb.swapIfNeeded(tab, u) }; return }   // وصلنا ليوتيوب (تحويل من الخادم): يُكمل في الـ WebView المخصّص
-            tab.loading = true; tab.url = u; tab.shieldHost = Shield.hostFor(u); Shield.onPageStart(v); Perf.onPageStart(v); Pwa.onPageStart(v, u)
+            tab.loading = true; tab.url = u; tab.shieldHost = Shield.hostFor(u); Shield.onPageStart(v); Perf.onPageStart(v); Pwa.onPageStart(v, u); if (WebCompat.loopTrip(v, tab, u)) return; WebCompat.onPageStart(v, tab, u)
         }
         override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) {
             // تنقّلات الصفحات أحادية الصفحة لا تستدعي onPageStarted
@@ -173,6 +174,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
             tab.canBack = v.canGoBack(); tab.canForward = v.canGoForward()
             (v.parent as? SwipeRefreshLayout)?.isRefreshing = false
             WebSupport.onPageDone(v)
+            WebCompat.onPageDone(tab)
             Perf.flushCookies()   // حفظ جلسات تسجيل الدخول (بحدّ أقصى كل 15 ثانية)
             PasswordBridge.onPageDone(v)
             Library.visit(u, v.title)   // سجل التصفح
@@ -184,6 +186,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
             (v.parent as? ViewGroup)?.removeView(v)
             runCatching { v.destroy() }
             tab.webView = null; tab.loading = false
+            tab.holdLoad = !WebCompat.rendererGone(tab)   // 3 انهيارات خلال 90 ثانية: لا حلقة إعادة تحميل، صفحة بزر إعادة المحاولة
             tab.epoch++
             return true
         }
@@ -193,7 +196,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
             // نسمح بقرار صريح من المستخدم لهذا الموقع فقط (ولخطأ «غير موثوقة» فقط، لا منتهية ولا مخالفة للنطاق)
             if (Build.VERSION.SDK_INT < 25 && e.primaryError == SslError.SSL_UNTRUSTED && host.isNotEmpty()) {
                 if (host in oldAndroidCertOk) { h.proceed(); return }
-                AlertDialog.Builder(ctx).setTitle(host).setMessage(L("شهادة هذا الموقع غير معروفة لنظامك. على أندرويد 6 غالباً يكون السبب أن النظام قديم ولا يحوي شهادات حديثة، لكن قد يكون هجوماً أيضاً. تابع فقط إن كنت تثق بالموقع ولا تُدخل كلمات مرور أو بيانات بنكية."))
+                novaDialog(ctx).setTitle(host).setMessage(L("شهادة هذا الموقع غير معروفة لنظامك. على أندرويد 6 غالباً يكون السبب أن النظام قديم ولا يحوي شهادات حديثة، لكن قد يكون هجوماً أيضاً. تابع فقط إن كنت تثق بالموقع ولا تُدخل كلمات مرور أو بيانات بنكية."))
                     .setPositiveButton(L("متابعة (غير آمن)")) { _, _ -> oldAndroidCertOk.add(host); h.proceed() }
                     .setNegativeButton(L("إلغاء")) { _, _ -> h.cancel() }.setOnCancelListener { h.cancel() }.show()
                 return
@@ -252,13 +255,11 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
                 }
                 null, "about", "data", "blob" -> false
                 "intent" -> {
-                    runCatching {
-                        // الرابط البديل يجب أن يكون http(s) فقط: كان يُمرَّر كما هو فيُنفَّذ javascript: أو file: داخل الصفحة الحالية
-                        Intent.parseUri(u.toString(), Intent.URI_INTENT_SCHEME)
-                            .getStringExtra("browser_fallback_url")?.let { f ->
-                                val fu = Uri.parse(f)
-                                if ((fu.scheme == "https" || fu.scheme == "http") && !Shield.isSpoofed(fu)) v.loadUrl(Security.cleanUrl(fu).toString(), Perf.privacyHeaders)
-                            }
+                    // الوجهة http(s) فقط (رابط بديل أو بيانات الرابط نفسه): كان الرابط يُبتلع فتبقى الخريطة معلّقة
+                    // إن كانت الوجهة هي الصفحة الحالية نفسها (زر «افتح في التطبيق» في الخرائط) نتجاهلها: تحميلها ثانية يصنع حلقة تحديث
+                    WebCompat.intentTarget(u.toString())?.takeIf { !WebCompat.samePage(v.url, it) }?.let { f ->
+                        val fu = Uri.parse(f)
+                        if (!Shield.isSpoofed(fu)) v.loadUrl(Security.cleanUrl(fu).toString(), Perf.privacyHeaders)
                     }
                     true
                 }
@@ -274,6 +275,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
         override fun onProgressChanged(v: WebView, p: Int) {
             val f = p / 100f   // نحدّث الحالة كل 5% فقط لتقليل إعادة التركيب
             if (p == 0 || p == 100 || kotlin.math.abs(f - tab.progress) >= 0.05f) tab.progress = f
+            WebCompat.onProgress(tab, p)   // اكتمال التقدّم = انتهاء التحميل حتى لو تأخّر onPageFinished
         }
         override fun onReceivedIcon(v: WebView, icon: Bitmap?) {
             val u = v.url ?: return
@@ -281,25 +283,34 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
         }
         override fun onReceivedTitle(v: WebView, t: String?) { if (!t.isNullOrBlank()) tab.title = t }
         override fun onShowCustomView(view: View, cb: CustomViewCallback) = h.showCustom(view, cb)
+        override fun getDefaultVideoPoster(): Bitmap? = WebCompat.videoPoster()   // null يُسقط بعض إصدارات المحرك عند عرض الفيديو
         override fun onHideCustomView() = h.hideCustom()
         override fun onShowFileChooser(v: WebView, cb: ValueCallback<Array<Uri>>, p: FileChooserParams) = h.chooser(cb, p)
         override fun onPermissionRequest(req: PermissionRequest) = h.permission(req)
         override fun onGeolocationPermissionsShowPrompt(origin: String, cb: GeolocationPermissions.Callback) = h.geo(origin, cb)
         override fun onJsAlert(v: WebView, url: String, msg: String, r: JsResult): Boolean {
             if (!Shield.dialogAllowed(hostOf(url))) { r.cancel(); return true }   // إغراق نوافذ
-            AlertDialog.Builder(ctx).setTitle(hostOf(url)).setMessage(msg.take(600)).setPositiveButton(L("حسناً")) { _, _ -> r.confirm() }
+            novaDialog(ctx).setTitle(hostOf(url)).setMessage(msg.take(600)).setPositiveButton(L("حسناً")) { _, _ -> r.confirm() }
                 .setOnCancelListener { r.cancel() }.show()
             return true
         }
         override fun onJsConfirm(v: WebView, url: String, msg: String, r: JsResult): Boolean {
             if (!Shield.dialogAllowed(hostOf(url))) { r.cancel(); return true }
-            AlertDialog.Builder(ctx).setTitle(hostOf(url)).setMessage(msg.take(600)).setPositiveButton(L("موافق")) { _, _ -> r.confirm() }
+            novaDialog(ctx).setTitle(hostOf(url)).setMessage(msg.take(600)).setPositiveButton(L("موافق")) { _, _ -> r.confirm() }
                 .setNegativeButton(L("إلغاء")) { _, _ -> r.cancel() }.setOnCancelListener { r.cancel() }.show()
             return true
         }
         override fun onJsPrompt(v: WebView, url: String, message: String?, defaultValue: String?, r: JsPromptResult): Boolean {
             if (!Shield.dialogAllowed(hostOf(url))) { r.cancel(); return true }
-            return false   // النافذة الافتراضية للنظام
+            val et = android.widget.EditText(ctx).apply { setText(defaultValue ?: ""); setSingleLine(); setSelectAllOnFocus(true) }
+            val box = android.widget.FrameLayout(ctx).apply {
+                val pad = (24 * ctx.resources.displayMetrics.density).toInt()
+                setPadding(pad, (8 * ctx.resources.displayMetrics.density).toInt(), pad, 0); addView(et)
+            }
+            novaDialog(ctx).setTitle(hostOf(url)).setMessage(message?.take(600)).setView(box)
+                .setPositiveButton(L("موافق")) { _, _ -> r.confirm(et.text.toString()) }
+                .setNegativeButton(L("إلغاء")) { _, _ -> r.cancel() }.setOnCancelListener { r.cancel() }.show()
+            return true
         }
     }
 }

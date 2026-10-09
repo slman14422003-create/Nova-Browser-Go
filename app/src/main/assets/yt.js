@@ -50,7 +50,9 @@ try {
       // يمنع ارتداد الصفحة (overscroll) الذي يقطع تمرير القوائم داخل WebView
       'html,body{overscroll-behavior-y:none}' +
       // طبقة «الفيديوهات المقترحة» عند الإيقاف تحجب المشغّل وتبطّئ اللمس
-      '.ytp-pause-overlay,.ytp-pause-overlay-container{display:none!important}';
+      '.ytp-pause-overlay,.ytp-pause-overlay-container{display:none!important}' +
+      // «الإضاءة السينمائية/المحيطية»: طبقة كانفس ضبابية خلف المشغّل لا تُعاد رسمها بعد الدوران فتظهر ضبابية ثم سوداء
+      '#cinematics canvas,.ytp-cinematic-container canvas,ytm-cinematic-container-renderer canvas{display:none!important}';
     // إخفاء شورتس (اختياري). القاعدة التي تستعمل :has منفصلة كي لا تُسقط القواعد الأخرى في المحركات القديمة
     var SHORTS = UI.shorts
       ? 'ytm-reel-shelf-renderer,ytm-shorts-lockup-view-model,ytm-shorts-lockup-view-model-v2{display:none!important}' : '';
@@ -63,6 +65,27 @@ try {
     }
     addStyle('nova-yt-fix-style', CSS + SHORTS);
     addStyle('nova-yt-fix-style2', SHORTS2);
+
+    // ───────── لمسات جمالية وسلاسة لقوائم يوتيوب (لا تمسّ المشغّل ولا صفحة المشاهدة نفسها) ─────────
+    var POLISH =
+      'html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}' +
+      '::-webkit-scrollbar{display:none}' +
+      // صور مصغّرة بحواف مدوّرة (قوائم الرئيسية والبحث والمقترحات فقط)
+      '.video-thumbnail-container-large,.video-thumbnail-container-compact,.media-item-thumbnail-container{border-radius:12px;overflow:hidden}' +
+      // يقلّل كلفة إعادة الحساب أثناء التمرير الطويل
+      'ytm-rich-item-renderer,ytm-media-item,ytm-compact-video-renderer,ytm-video-with-context-renderer{contain:layout style}' +
+      // أزرار وشرائح: انتقال ناعم عند اللمس
+      '.yt-spec-button-shape-next,ytm-chip-cloud-chip-renderer,ytm-button-renderer{transition:transform .16s cubic-bezier(.2,0,0,1)}';
+    var ANIM =
+      '@keyframes novaIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}' +
+      // ظهور تدريجي لبطاقات الفيديو الجديدة (التمرير اللانهائي والبحث) بحركة قصيرة على الطبقة فقط (opacity/transform)
+      'ytm-rich-item-renderer,ytm-media-item,ytm-compact-video-renderer,ytm-video-with-context-renderer{animation:novaIn .3s cubic-bezier(.2,0,0,1) both}' +
+      // ضغط خفيف على البطاقات والأزرار
+      'ytm-media-item:active,ytm-compact-video-renderer:active,ytm-rich-item-renderer:active{transform:scale(.99);transition:transform .12s ease-out}' +
+      '.yt-spec-button-shape-next:active,ytm-chip-cloud-chip-renderer:active,ytm-button-renderer:active{transform:scale(.95)}' +
+      '@media (prefers-reduced-motion:reduce){ytm-rich-item-renderer,ytm-media-item,ytm-compact-video-renderer,ytm-video-with-context-renderer{animation:none!important}}';
+    addStyle('nova-yt-polish', POLISH);
+    if (UI.anim) addStyle('nova-yt-anim', ANIM);
 
     // إعدادات الترجمة تأتي من إعدادات التطبيق مباشرة (لا تخزين محلي ولا واجهة وسيطة)
     (function applyCc() {
@@ -265,7 +288,8 @@ try {
   var BG = __BG__;
   var bg = false, userPaused = false, lastResume = 0, nlog = 0, lastGesture = 0;
   // الحماية من إيقاف الصفحة للفيديو أثناء الخلفية/النافذة المنبثقة (إن فُعّلت من الإعدادات)
-  function guard() { return BG && bg; }
+  var graceUntil = 0;   // بعد العودة للواجهة يصل أحياناً إيقاف متأخر من النظام (تدوير الشاشة): نبقي الحماية لحظة
+  function guard() { return BG && (bg || Date.now() < graceUntil); }
 
   function send(o) { try { window.NovaYt.postMessage(JSON.stringify(o)); } catch (e) {} }
   function log(m) { if (nlog++ < 150) send({ t: 'log', m: String(m).slice(0, 400) }); }
@@ -338,16 +362,128 @@ try {
     window.__novaOrigPause = origPause;
   } catch (e) {}
 
-  window.__novaBg = function (b) { bg = !!b; log('bg=' + bg); };
+  window.__novaBg = function (b) { b = !!b; if (bg && !b) graceUntil = Date.now() + 1500; bg = b; log('bg=' + bg); };
+
+  // ───────── استعادة الموضع إذا أعاد يوتيوب تحميل الفيديو من الصفر أثناء الخروج للخلفية ─────────
+  // السجل: عند الضغط على زر الرئيسية يوقف النظام الفيديو (vis=hidden) ثم يُفرّغ يوتيوب المصدر (emptied t=0) فيبدأ من البداية.
+  // نحفظ آخر موضع ومعرّف الفيديو، وإن حدث التفريغ أثناء الخلفية/بعدها بلحظات نقفز لنفس الموضع عند جاهزية المصدر الجديد (لنفس الفيديو فقط).
+  var lastT = 0, lastId = '', lastBgAt = 0, restore = null;
+  function curId() { try { var p = document.getElementById('movie_player'); var d = p && p.getVideoData && p.getVideoData(); return (d && d.video_id) || ''; } catch (x) { return ''; } }
+  var _bgFn = window.__novaBg;
+  window.__novaBg = function (b) { lastBgAt = Date.now(); return _bgFn(b); };
+  document.addEventListener('timeupdate', function (ev) {
+    var e = ev.target; if (!e || e.tagName !== 'VIDEO' || e.ended || !(e.currentTime > 1)) return;
+    lastT = e.currentTime; lastId = curId();
+  }, true);
+  document.addEventListener('emptied', function (ev) {
+    if (!ev.target || ev.target.tagName !== 'VIDEO') return;
+    if ((guard() || Date.now() - lastBgAt < 6000) && lastT > 3) { restore = { t: lastT, id: lastId, at: Date.now() }; log('will restore ' + Math.round(lastT)); }
+  }, true);
+  function tryRestore(ev) {
+    var e = ev.target; if (!restore || !e || e.tagName !== 'VIDEO') return;
+    if (Date.now() - restore.at > 20000) { restore = null; return; }
+    var id = curId(); if (restore.id && id && id !== restore.id) { restore = null; return; }
+    if (e.currentTime < restore.t - 2) {
+      var r = restore; restore = null;
+      try { e.currentTime = r.t; } catch (x) {}
+      log('restored ' + Math.round(r.t));
+      if (!userPaused) { var pl = e.play(); if (pl && pl.catch) pl.catch(function () {}); }
+    } else restore = null;
+  }
+  ['loadedmetadata', 'canplay'].forEach(function (n) { document.addEventListener(n, tryRestore, true); });
+
+  // ───────── إصلاح الشاشة السوداء بعد الدوران/ملء الشاشة ─────────
+  // الصفحة تُعدّ مخفية لحظة الدوران فيُفرّغ يوتيوب مصدر الفيديو (emptied) ويبقى المشغّل أسود حتى إعادة التحميل.
+  // الفحص: هل للعنصر مصدر وإطار مرسوم؟ إن لا → نطلب من المشغّل إعادة التحميل من نفس الثانية، وفي المرحلة الأخيرة نعيد فتح الصفحة بنفس الموضع.
+  function blackFrame(e) {
+    try {
+      if (e.paused && e.currentTime < 1) return false;
+      var c = document.createElement('canvas'); c.width = c.height = 8;
+      var x = c.getContext('2d'); x.drawImage(e, 0, 0, 8, 8);
+      var d = x.getImageData(0, 0, 8, 8).data;
+      for (var i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 12) return false;
+      return true;
+    } catch (err) { return false; }   // محمي/ملوّث: لا نحكم
+  }
+  // يفحص هل عنصر الفيديو مرئي فعلاً داخل المشغّل (مقاس/موضع/شفافية). refit القديم يمسح مقاسات يوتيوب المضمّنة فقد يبقى العنصر بلا مقاس
+  // والصوت والترجمة يعملان بلا صورة. إن وجدنا خللاً نثبّت مقاساً صريحاً يملأ المشغّل (object-fit: contain يحفظ النسبة).
+  function fixLayout(e, p) {
+    var info = {};
+    try {
+      var r = e.getBoundingClientRect(), pr = (p || e.parentElement).getBoundingClientRect(), cs = getComputedStyle(e);
+      info = { v: [Math.round(r.width), Math.round(r.height), Math.round(r.left), Math.round(r.top)], p: [Math.round(pr.width), Math.round(pr.height), Math.round(pr.left), Math.round(pr.top)],
+        d: cs.display, vis: cs.visibility, op: cs.opacity, of: cs.objectFit };
+      var bad = r.width < pr.width * 0.4 || r.height < pr.height * 0.3 || Math.abs(r.left - pr.left) > pr.width * 0.5 || Math.abs(r.top - pr.top) > pr.height * 0.5 ||
+        cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.1;
+      info.bad = bad;
+      if (bad && pr.width > 50 && pr.height > 50) {
+        var st = e.style;
+        st.setProperty('display', 'block', 'important'); st.setProperty('visibility', 'visible', 'important'); st.setProperty('opacity', '1', 'important');
+        st.setProperty('position', 'absolute', 'important'); st.setProperty('left', '0px', 'important'); st.setProperty('top', '0px', 'important');
+        st.setProperty('width', Math.round(pr.width) + 'px', 'important'); st.setProperty('height', Math.round(pr.height) + 'px', 'important');
+        st.setProperty('object-fit', 'contain', 'important');
+        info.fixed = 1;
+      }
+    } catch (x) { info.err = String(x); }
+    return info;
+  }
+  window.__novaHeal = function (stage) {
+    try {
+      if (location.pathname !== '/watch') return 'skip';
+      var e = v(), p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      if (!e) return 'novideo';
+      var ok = e.readyState >= 2 && e.videoWidth > 0 && !!e.currentSrc;
+      var loading = e.networkState === 2 && e.readyState < 2;     // ما زال يحمّل: ننتظر
+      if (ok) {
+        var lay = fixLayout(e, p); log('heal diag stage=' + stage + ' ' + JSON.stringify(lay) + ' black=' + blackFrame(e) + ' rs=' + e.readyState + ' vw=' + e.videoWidth + ' t=' + Math.round(e.currentTime));
+        // يعمل (صوت وترجمة) لكن قد لا تُرسم الصورة: نقرأ إطاراً صغيراً من الفيديو؛ إن كان أسود كلياً نعيد إنشاء المشغّل
+        if (stage >= 1 && blackFrame(e)) {
+          var id0 = '', t1 = Math.floor(e.currentTime || 0);
+          try { var d0 = p && p.getVideoData && p.getVideoData(); id0 = d0 && d0.video_id || ''; } catch (x) {}
+          if (!id0) { var m0 = /[?&]v=([^&]+)/.exec(location.search); id0 = m0 ? m0[1] : ''; }
+          log('heal black frame stage=' + stage + ' id=' + id0);
+          if (id0) {
+            if (stage < 2 && p && p.loadVideoById) { try { p.loadVideoById(id0, t1); return 'black-reloaded-player'; } catch (x) {} }
+            if (stage >= 2) { location.replace('/watch?v=' + encodeURIComponent(id0) + (t1 > 3 ? '&t=' + t1 + 's' : '')); return 'black-reloaded-page'; }
+          }
+        }
+        e.style.setProperty('transform', 'translateZ(0)', 'important'); void e.offsetHeight; e.style.removeProperty('transform');
+        if (e.paused) { try { var t0 = e.currentTime; e.currentTime = t0 > 0.05 ? t0 - 0.01 : t0; } catch (x) {} }
+        return 'ok';
+      }
+      if (document.querySelector('.ad-showing,.ad-interrupting')) return 'ad';
+      if (loading && (stage < 2 || e.currentSrc)) return 'loading';
+      var id = '', t = Math.floor(e.currentTime || 0);
+      try { var d = p && p.getVideoData && p.getVideoData(); id = d && d.video_id || ''; if (p && p.getCurrentTime) t = Math.floor(p.getCurrentTime() || t); } catch (x) {}
+      if (!id) { var m = /[?&]v=([^&]+)/.exec(location.search); id = m ? m[1] : ''; }
+      log('heal stage=' + stage + ' rs=' + e.readyState + ' id=' + id + ' t=' + t);
+      if (!id) return 'noid';
+      if (stage < 2) {
+        if (p && p.loadVideoById) { try { p.loadVideoById(id, t); if (userPaused && p.pauseVideo) setTimeout(function () { try { p.pauseVideo(); } catch (x) {} }, 800); return 'reloaded-player'; } catch (x) {} }
+        var pl = e.play(); if (pl && pl.catch) pl.catch(function () {});
+        return 'play';
+      }
+      location.replace('/watch?v=' + encodeURIComponent(id) + (t > 3 ? '&t=' + t + 's' : ''));
+      return 'reloaded-page';
+    } catch (x) { return 'err'; }
+  };
 
   // إيقاف جاء من خارج الصفحة (نظام/WebView): نستأنف ما لم يطلب المستخدم الإيقاف
+  var burstAt = 0, burstN = 0, retryT = 0;
   document.addEventListener('play', function () { userPaused = false; }, true);
   document.addEventListener('pause', function (ev) {
     var e = v();
     if (!guard() || userPaused || !e || ev.target !== e || e.ended) return;
     if (Date.now() - lastGesture < 900) { userPaused = true; return; }
     var now = Date.now();
-    if (now - lastResume < 400) return;
+    if (now - burstAt > 3000) { burstAt = now; burstN = 0; }
+    if (++burstN > 8) return;   // يوتيوب يصرّ على الإيقاف فعلاً: لا نتصارع معه
+    if (now - lastResume < 400) {
+      // إيقاف ثانٍ قريب جداً من الاستئناف (يحدث عند تدوير الشاشة) كان يُهمل فيبقى الفيديو متوقفاً: نعيد المحاولة بعد قليل
+      clearTimeout(retryT);
+      retryT = setTimeout(function () { if (guard() && !userPaused && e.paused) { var p2 = e.play(); if (p2 && p2.catch) p2.catch(function () {}); } }, 450);
+      return;
+    }
     lastResume = now;
     log('resuming after external pause vis=' + realVis());
     setTimeout(function () { if (guard() && !userPaused && e.paused) { var p = e.play(); if (p && p.catch) p.catch(function (x) { log('play rejected ' + x); }); } }, 120);

@@ -18,5 +18,7 @@
         <domain includeSubdomains="true">youtube.com</domain>
         <domain includeSubdomains="true">ytimg.com</domain>
         <domain includeSubdomains="true">googlevideo.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>   <!-- فحص إصدار المحرك -->
+        <domain includeSubdomains="true">gstatic.com</domain>
     </domain-config>
 </network-security-config>

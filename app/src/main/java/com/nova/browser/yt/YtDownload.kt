@@ -1,6 +1,5 @@
 package com.nova.browser
 
-import android.content.ContentValues
 import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -166,7 +165,12 @@ object YtDownload {
         val holder = arrayOfNulls<DlTask>(2)
         val left = AtomicInteger(2)
         val finish: (DlTask) -> Unit = {
-            if (left.decrementAndGet() == 0) Thread { runMux(ctx.applicationContext, base, holder[0]!!, holder[1]!!) }.start()
+            if (left.decrementAndGet() == 0) {
+                Downloader.work.incrementAndGet()   // يُبقي إشعار «جارٍ المعالجة» حيّاً حتى انتهاء الدمج
+                Thread {
+                    try { runMux(ctx.applicationContext, base, holder[0]!!, holder[1]!!) } finally { Downloader.work.decrementAndGet() }
+                }.start()
+            }
         }
         holder[0] = Downloader.startNamed(ctx, o.url, YT_UA, ref, "$base [video].mp4", "video/mp4", finish)
         holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_UA, ref, "$base [audio].m4a", "audio/mp4", finish)

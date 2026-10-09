@@ -1,9 +1,6 @@
 package com.nova.browser
 
 import android.app.ActivityManager
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import android.view.View
@@ -32,19 +29,6 @@ object LowEnd {
     }
 
     val on: Boolean get() = when (Prefs.lite) { 1 -> true; 2 -> false; else -> device }
-}
-
-/** إشعارات تعمل من أندرويد 6: القنوات والـ Builder ذو القناة موجودان من أندرويد 8 فقط. */
-object Notif {
-    fun channel(c: Context, id: String, name: String, importance: Int) {
-        if (Build.VERSION.SDK_INT < 26) return
-        c.getSystemService(NotificationManager::class.java)?.createNotificationChannel(NotificationChannel(id, name, importance))
-    }
-
-    @Suppress("DEPRECATION")
-    fun builder(c: Context, channel: String, low: Boolean = false): Notification.Builder =
-        if (Build.VERSION.SDK_INT >= 26) Notification.Builder(c, channel)
-        else Notification.Builder(c).apply { if (low) setPriority(Notification.PRIORITY_LOW) }
 }
 
 /** استدعاءات WebView/View التي لا توجد قبل أندرويد 8 (استدعاؤها مباشرة يُسقط التطبيق على أندرويد 6/7 بـ NoSuchMethodError). */

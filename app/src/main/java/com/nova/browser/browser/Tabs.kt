@@ -154,7 +154,7 @@ fun TabSwitcher(
                                 }
                             }
                         }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(20.dp)) {
                             DropdownMenuItem(text = { Text(if (t.pinned) L("إلغاء التثبيت") else L("تثبيت")) }, onClick = { t.pinned = !t.pinned; menu = false })
                             DropdownMenuItem(text = { Text(L("نسخ التبويب")) }, onClick = { menu = false; onDuplicate(i) })
                             DropdownMenuItem(text = { Text(L("إغلاق التبويبات الأخرى")) }, onClick = { menu = false; onCloseOthers(i) })

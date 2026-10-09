@@ -140,8 +140,25 @@ object Shield {
     // ───────────────────────── الطرف الأول/الثالث ─────────────────────────
     private val multiTld = setOf("co", "com", "org", "net", "gov", "edu", "ac", "or", "ne")
 
+    private val siteCache = ConcurrentHashMap<String, String>()
+
+    /**
+     * النطاق المسجَّل (eTLD+1) من قائمة Public Suffix الكاملة المضمّنة في OkHttp (موجودة أصلاً في المشروع، بلا مكتبة جديدة).
+     * القائمة القديمة اليدوية كانت تخطئ في نطاقات مثل com.sa وgov.jo وgithub.io فتعدّ مواقع مختلفة «طرفاً أول».
+     */
     private fun site(host: String): String {
-        val p = host.lowercase().trimEnd('.').split('.')
+        val h = host.lowercase().trimEnd('.')
+        siteCache[h]?.let { return it }
+        val r = runCatching {
+            okhttp3.HttpUrl.Builder().scheme("https").host(h).build().topPrivateDomain()
+        }.getOrNull() ?: legacySite(h)
+        if (siteCache.size > 2000) siteCache.clear()
+        siteCache[h] = r
+        return r
+    }
+
+    private fun legacySite(h: String): String {
+        val p = h.split('.')
         if (p.size <= 2) return p.joinToString(".")
         val n = p.size
         return if (p[n - 1].length == 2 && p[n - 2] in multiTld) p.subList(n - 3, n).joinToString(".") else p.subList(n - 2, n).joinToString(".")
