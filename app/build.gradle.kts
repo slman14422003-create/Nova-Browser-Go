@@ -20,11 +20,11 @@ val hasReleaseSigning = ksPath != null && ksPass != null && ksAlias != null && r
 
 android {
     namespace = "com.nova.browser"   // اسم حزمة الشيفرة (R) يبقى كما هو؛ معرّف التطبيق أدناه مختلف كي يتعايش مع Nova Browser
-    compileSdk = 35
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.nova.browser.go"
         minSdk = 23   // أندرويد 6.0 فما فوق
-        targetSdk = 35
+        targetSdk = 37
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10
         versionName = System.getenv("VERSION_NAME") ?: "1.8.1-go"
         // مستودع التحديثات: يُملأ تلقائياً في GitHub Actions (owner/repo)، فارغ محلياً = التحديث معطّل
