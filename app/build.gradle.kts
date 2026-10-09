@@ -23,7 +23,7 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.nova.browser.go"
-        minSdk = 23   // أندرويد 6.0 فما فوق
+        minSdk = 24   // أندرويد 7.0 فما فوق (webkit 1.16.0 بيتطلب 24 كحد أدنى)
         targetSdk = 37
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10
         versionName = System.getenv("VERSION_NAME") ?: "1.8.1-go"
