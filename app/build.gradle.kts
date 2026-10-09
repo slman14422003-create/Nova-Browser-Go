@@ -86,7 +86,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")                  // ActivityManagerCompat/ServiceCompat/NotificationManagerCompat… (توافق أندرويد 6 وGo)
     implementation("androidx.webkit:webkit:1.16.0")             // حقن سكربت الحماية قبل الصفحة (1.16: أحدث مستقر، يدعم ميزات المحرك الجديدة)
     implementation("androidx.browser:browser:1.8.0")              // Chrome Custom Tabs لصفحات تسجيل الدخول الحساسة
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")           // شبكة HTTP/2 مع كاش وإعادة استخدام الاتصالات (اقتراحات البحث)
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")            // شبكة HTTP/2 — موحّدة مع نسخة NewPipeExtractor الداخلية (okhttp-android) لتفادي تعارض النسخ
     implementation("androidx.profileinstaller:profileinstaller:1.4.1") // ملفات Baseline لتسريع بدء التشغيل وتقليل التقطيع
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5") // استخراج روابط الفيديو/الصوت من يوتيوب (مجاني ومفتوح المصدر)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

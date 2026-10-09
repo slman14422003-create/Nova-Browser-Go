@@ -1,6 +1,12 @@
 -keepattributes *Annotation*
 -dontwarn java.lang.invoke.StringConcatFactory
 
+# مكتبة الـ core library desugaring (تشغّل APIs جافا حديثة زي
+# URLDecoder.decode(String, Charset) على أندرويد قديم). بدون هذه القاعدة
+# R8 بيحذفها في الريليس فيحصل NoSuchMethodError وقت التشغيل.
+-keep class j$.** { *; }
+-dontwarn j$.**
+
 # NewPipeExtractor + Rhino + jsoup
 -keep class org.schabi.newpipe.extractor.** { *; }
 -keep class org.mozilla.javascript.** { *; }
