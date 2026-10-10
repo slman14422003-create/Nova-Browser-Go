@@ -89,7 +89,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")            // شبكة HTTP/2 — موحّدة مع نسخة NewPipeExtractor الداخلية (okhttp-android) لتفادي تعارض النسخ
     implementation("androidx.profileinstaller:profileinstaller:1.4.1") // ملفات Baseline لتسريع بدء التشغيل وتقليل التقطيع
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5") // استخراج روابط الفيديو/الصوت من يوتيوب (مجاني ومفتوح المصدر)
-    implementation("org.conscrypt:conscrypt-android:2.5.2")        // طبقة TLS حديثة مستقلة عن نظام الجهاز — تحل فشل تحميل روابط يوتيوب (googlevideo) على الأجهزة القديمة (أندرويد دون 13) التي لا تدعم تبادل TLS الذي تفرضه خوادم غوغل حالياً
+    implementation("org.conscrypt:conscrypt-android:2.7.0")        // طبقة TLS حديثة مستقلة عن نظام الجهاز — تحل فشل تحميل روابط يوتيوب (googlevideo) على الأجهزة القديمة (أندرويد دون 13) التي لا تدعم تبادل TLS الذي تفرضه خوادم غوغل حالياً
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     testImplementation("junit:junit:4.13.2")
 }
