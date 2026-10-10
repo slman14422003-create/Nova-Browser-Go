@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'الوسم (مثال v1.5.0)'
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 17 }
+
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '9.4.1' }
+
+      - name: Decode signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::أضف الأسرار KEYSTORE_BASE64 و KEYSTORE_PASSWORD و KEY_ALIAS و KEY_PASSWORD أولاً (docs/SIGNING.md)"; exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/nova-release.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/nova-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed APK + AAB
+        run: gradle assembleRelease bundleRelease --stacktrace
+        env:
+          VERSION_NAME: ${{ env.TAG }}
+          VERSION_CODE: ${{ github.run_number }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Collect + checksums
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk "dist/NovaGo-${TAG}.apk"
+          cp app/build/outputs/bundle/release/*.aab "dist/NovaGo-${TAG}.aab"
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "dist/NovaGo-${TAG}.apk" | tee dist/CERT.txt
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.apk
+            dist/*.aab
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Nova Go ${{ env.TAG }}
+          generate_release_notes: true
+          files: |
+            dist/*.apk
+            dist/*.aab
+            dist/SHA256SUMS.txt
+          prerelease: ${{ contains(env.TAG, '-') }}
+
+      - name: Cleanup keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/nova-release.jks"
