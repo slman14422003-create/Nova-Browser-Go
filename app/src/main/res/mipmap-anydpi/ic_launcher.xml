@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- أيقونة أندرويد 6/7 (قبل الأيقونات التكيّفية). من أندرويد 8 يُستخدم mipmap-anydpi-v26 -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@drawable/ic_launcher_legacy_bg" />
-    <item android:drawable="@drawable/ic_launcher_legacy_fg" android:gravity="center" />
-</layer-list>
