@@ -1,0 +1,54 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin      # كود التطبيق (Kotlin + Java)
+            build-mode: manual
+          - language: javascript-typescript   # سكربتات الصفحات في assets (yt.js, pw.js, privacy.js, smooth.js)
+            build-mode: none
+          - language: actions          # ملفات workflows نفسها
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.build-mode == 'manual'
+        uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 17 }
+      - if: matrix.build-mode == 'manual'
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '9.4.1', cache-read-only: true }
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      # يجب أن يُترجَم الكود فعلياً أثناء التحليل: نعطّل كاش البناء ونعيد تنفيذ كل المهام
+      # وإلا تظهر المهام FROM-CACHE فلا يرى CodeQL أي كود Java/Kotlin ويفشل.
+      - if: matrix.build-mode == 'manual'
+        name: Build for CodeQL (no cache)
+        run: gradle clean assembleDebug --no-daemon --no-build-cache --rerun-tasks -Dorg.gradle.caching=false -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.incremental=false
+
+      - uses: github/codeql-action/analyze@v4
+        with: { category: '/language:${{ matrix.language }}' }
