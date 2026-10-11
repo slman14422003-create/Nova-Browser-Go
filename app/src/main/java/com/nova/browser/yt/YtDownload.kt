@@ -200,6 +200,7 @@ object YtFetch {
                 null
             }
         }
+        BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
         lastGood?.let { g -> attempt(g)?.let { return it } }
         for (base in INSTANCES) attempt(base)?.let { return it }
         // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)

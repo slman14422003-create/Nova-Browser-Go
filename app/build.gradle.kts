@@ -29,6 +29,8 @@ android {
         versionName = System.getenv("VERSION_NAME") ?: "1.8.1-go"
         // مستودع التحديثات: يُملأ تلقائياً في GitHub Actions (owner/repo)، فارغ محلياً = التحديث معطّل
         buildConfigField("String", "UPDATE_REPO", "\"" + (System.getenv("GITHUB_REPOSITORY") ?: "") + "\"")
+        // بروكسي Cloudflare Worker لاستخراج يوتيوب (يتجاوز حجب خوادم Piped): متغيّر NOVA_YT_PROXY في GitHub (Settings → Variables). فارغ = بلا بروكسي
+        buildConfigField("String", "YT_PROXY", "\"" + (System.getenv("NOVA_YT_PROXY") ?: "") + "\"")
         vectorDrawables.useSupportLibrary = true
         // لا مكتبات native (حُذف FFmpeg) ← APK واحد يعمل على armeabi-v7a وarm64 وx86 وبحجم صغير
     }

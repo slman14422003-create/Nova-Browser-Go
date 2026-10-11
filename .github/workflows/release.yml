@@ -48,6 +48,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          NOVA_YT_PROXY: ${{ vars.NOVA_YT_PROXY }}
 
       - name: Collect + checksums
         run: |

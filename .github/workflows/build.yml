@@ -63,6 +63,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          NOVA_YT_PROXY: ${{ vars.NOVA_YT_PROXY }}
 
       - name: Build debug + release APK
         run: gradle assembleDebug assembleRelease --stacktrace
@@ -71,6 +72,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          NOVA_YT_PROXY: ${{ vars.NOVA_YT_PROXY }}
 
       - name: Summary
         if: always()
