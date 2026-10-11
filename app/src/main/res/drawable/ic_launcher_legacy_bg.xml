@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- أندرويد 6/7: خلفية بلون واحد (التدرجات داخل vector تحتاج أندرويد 7 وما فوق) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FF1B1A18" />
+</shape>
