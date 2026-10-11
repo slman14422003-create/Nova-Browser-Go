@@ -189,16 +189,29 @@ object YtFetch {
         return list
     }
 
+    /** عملاء InnerTube بالترتيب: كل واحد قد ينجح حين يرفض غيره (يوتيوب يشدّد على عميل ويترك آخر). */
+    private class Cl(val name: String, val ver: String, val id: String, val ua: String, val ctx: JSONObject.() -> Unit)
+    private val CLIENTS = listOf(
+        Cl("ANDROID_VR", YT_VR_VER, "28", YT_VR_UA) {
+            put("deviceMake", "Oculus"); put("deviceModel", "Quest 3"); put("osName", "Android"); put("osVersion", "12L"); put("androidSdkVersion", 32)
+        },
+        Cl("IOS", "20.10.4", "5", "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)") {
+            put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2"); put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
+        },
+        Cl("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "85", "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15") {
+            put("clientScreen", "EMBED")
+        },
+    )
+
     /** استخراج مباشر من يوتيوب (من جوال المستخدم نفسه، فالروابط مرتبطة بعنوانه). يعيد JSON بنفس شكل Piped ليُحلَّل بـ parse(). */
-    private fun innertube(id: String): String {
-        val body = JSONObject().put("videoId", id).put("contentCheckOk", true).put("racyCheckOk", true)
-            .put("context", JSONObject().put("client", JSONObject()
-                .put("clientName", "ANDROID_VR").put("clientVersion", YT_VR_VER)
-                .put("deviceMake", "Oculus").put("deviceModel", "Quest 3")
-                .put("osName", "Android").put("osVersion", "12L").put("androidSdkVersion", 32)
-                .put("hl", "en").put("gl", "US")))
+    private fun innertube(id: String, c: Cl): String {
+        val cl = JSONObject().put("clientName", c.name).put("clientVersion", c.ver).put("hl", "en").put("gl", "US")
+        c.ctx(cl)
+        val ctx = JSONObject().put("client", cl)
+        if (c.name.startsWith("TVHTML5")) ctx.put("thirdParty", JSONObject().put("embedUrl", "https://www.youtube.com/"))
+        val body = JSONObject().put("videoId", id).put("contentCheckOk", true).put("racyCheckOk", true).put("context", ctx)
         val req = okhttp3.Request.Builder().url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-            .header("User-Agent", YT_VR_UA).header("X-YouTube-Client-Name", "28").header("X-YouTube-Client-Version", YT_VR_VER)
+            .header("User-Agent", c.ua).header("X-YouTube-Client-Name", c.id).header("X-YouTube-Client-Version", c.ver)
             .header("Origin", "https://www.youtube.com")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         client.newCall(req).execute().use { r ->
@@ -251,11 +264,13 @@ object YtFetch {
             }
         }
         var ytErr = ""
-        try {
-            val r = parse(innertube(id))
-            if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
-            ytErr = "no downloadable formats"
-        } catch (e: Exception) { ytErr = e.message ?: e.javaClass.simpleName; YtLog.add("innertube -> $ytErr") }
+        for (c in CLIENTS) {
+            try {
+                val r = parse(innertube(id, c))
+                if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
+                ytErr = "${c.name}: no downloadable formats"
+            } catch (e: Exception) { ytErr = "${c.name}: " + (e.message ?: e.javaClass.simpleName); YtLog.add("innertube $ytErr") }
+        }
         val px = BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }
         px?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
         val proxyErr = px?.let { p -> errors.firstOrNull { it.startsWith(p.removePrefix("https://")) } }
@@ -266,7 +281,7 @@ object YtFetch {
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
             (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +
-                "\nYouTube → " + ytErr + "\n" + (proxyErr?.let { "Worker → " + it.substringAfter(": ") + "\n" } ?: "") + errors.takeLast(1).joinToString("\n")
+                (if (ytErr.contains("LOGIN_REQUIRED")) "\n" + L("يوتيوب يشتبه بشبكتك — جرّب Wi-Fi مختلفاً أو VPN") else "") + "\nYouTube → " + ytErr + "\n" + (proxyErr?.let { "Worker → " + it.substringAfter(": ") + "\n" } ?: "") + errors.takeLast(1).joinToString("\n")
         )
     }
 
