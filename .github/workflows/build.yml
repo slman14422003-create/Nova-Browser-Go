@@ -48,9 +48,12 @@ jobs:
       - name: Decode signing key (إن وُجدت الأسرار)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/nova-release.jks"
+            echo "$KEYSTORE_BASE64" | tr -d ' \r\n\t"' | base64 -d > "$RUNNER_TEMP/nova-release.jks" || true
+            echo "حجم المفتاح بعد الفك: $(wc -c < "$RUNNER_TEMP/nova-release.jks") بايت"
+            keytool -list -keystore "$RUNNER_TEMP/nova-release.jks" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1 || { echo "::error::KEYSTORE_BASE64 ناقص أو تالف أو كلمة السر خاطئة — أعد نسخ الملف كاملاً (طول النص المتوقع في secrets-to-copy.txt)"; exit 1; }
             echo "KEYSTORE_PATH=$RUNNER_TEMP/nova-release.jks" >> "$GITHUB_ENV"
             echo "SIGNED=true" >> "$GITHUB_ENV"
           else

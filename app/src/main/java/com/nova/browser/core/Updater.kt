@@ -46,6 +46,30 @@ object Updater {
         return p.scheme == "https" && trustedHosts.any { h == it || h.endsWith(".$it") }
     }
 
+    // GitHub محجوب/معترَض في بعض الشبكات (خطأ CertPathValidator): نجرّب الاتصال المباشر أولاً ثم عبر Worker المشروع.
+    // الملف المنزَّل يبقى محميّاً بفحص الحجم والبصمة SHA-256 والتوقيع، فالوسيط لا يستطيع تمرير ملف مختلف.
+    private val proxy: String get() = BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") } ?: ""
+    private fun proxyHost(u: String?): Boolean = proxy.isNotEmpty() && runCatching { Uri.parse(u).host == Uri.parse(proxy).host }.getOrDefault(false)
+
+    private fun openGet(url: String, viaProxy: String?, accept: String?): HttpURLConnection {
+        val target = viaProxy ?: url
+        val cn = URL(target).openConnection() as HttpURLConnection
+        cn.connectTimeout = 8000; cn.readTimeout = 20000; cn.instanceFollowRedirects = true
+        if (accept != null) cn.setRequestProperty("Accept", accept)
+        return cn
+    }
+
+    /** يفتح الرابط مباشرة؛ إن فشل الاتصال/الشهادة يعيد المحاولة عبر الـ Worker. */
+    private fun connect(url: String, proxied: String?, accept: String? = null): HttpURLConnection {
+        try {
+            val cn = openGet(url, null, accept)
+            if (cn.responseCode == 200) return cn
+            cn.disconnect()
+        } catch (e: java.io.IOException) { if (proxied == null) throw e }
+        if (proxied == null) throw java.io.IOException("HTTP error")
+        return openGet(url, proxied, accept)
+    }
+
     /** يعيد null إن كان الملف سليماً، وإلا سبب الرفض. */
     @Suppress("DEPRECATION")
     private fun verifyApk(c: Context, f: File): String? = try {
@@ -98,9 +122,7 @@ object Updater {
         phase = UpdPhase.CHECKING; error = ""
         Thread({
             try {
-                val cn = URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection
-                cn.connectTimeout = 8000; cn.readTimeout = 8000
-                cn.setRequestProperty("Accept", "application/vnd.github+json")
+                val cn = connect("https://api.github.com/repos/$repo/releases/latest", proxy.takeIf { it.isNotEmpty() }?.let { "$it/gh/repos/$repo/releases/latest" }, "application/vnd.github+json")
                 if (cn.responseCode != 200) throw java.io.IOException("HTTP " + cn.responseCode)
                 val j = JSONObject(cn.inputStream.bufferedReader().use { it.readText() })
                 cn.disconnect()
@@ -151,11 +173,10 @@ object Updater {
         Thread({
             try {
                 val f = apkFile(app); val tmp = File(f.parentFile, "nova-update.part")
-                val cn = URL(url).openConnection() as HttpURLConnection
-                cn.connectTimeout = 10000; cn.readTimeout = 20000; cn.instanceFollowRedirects = true
+                val cn = connect(url, proxy.takeIf { it.isNotEmpty() }?.let { "$it/dl?u=" + java.net.URLEncoder.encode(url, "UTF-8") })
                 if (cn.responseCode != 200) throw java.io.IOException("HTTP " + cn.responseCode)
-                // بعد التحويلات: يجب أن نبقى على https وعلى نطاقات GitHub
-                if (!trustedUrl(cn.url.toString())) { cn.disconnect(); throw java.io.IOException("untrusted redirect") }
+                // بعد التحويلات: يجب أن نبقى على https وعلى نطاقات GitHub (أو الـ Worker الخاص بالمشروع)
+                if (!trustedUrl(cn.url.toString()) && !proxyHost(cn.url.toString())) { cn.disconnect(); throw java.io.IOException("untrusted redirect") }
                 val total = (cn.getHeaderField("Content-Length")?.trim()?.toLongOrNull() ?: 0L).takeIf { it > 0 } ?: i.size
                 var done = 0L; var lastUi = 0L
                 val md = MessageDigest.getInstance("SHA-256")
