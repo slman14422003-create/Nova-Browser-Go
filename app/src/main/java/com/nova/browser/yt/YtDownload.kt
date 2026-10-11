@@ -200,7 +200,9 @@ object YtFetch {
                 null
             }
         }
-        BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
+        val px = BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }
+        px?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
+        val proxyErr = px?.let { p -> errors.firstOrNull { it.startsWith(p.removePrefix("https://")) } }
         lastGood?.let { g -> attempt(g)?.let { return it } }
         for (base in INSTANCES) attempt(base)?.let { return it }
         // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)
@@ -208,7 +210,7 @@ object YtFetch {
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
             (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +
-                "\n" + errors.takeLast(2).joinToString("\n")
+                "\n" + (proxyErr?.let { "Worker → " + it.substringAfter(": ") + "\n" } ?: "") + errors.takeLast(1).joinToString("\n")
         )
     }
 
@@ -457,7 +459,7 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                             Spacer(Modifier.width(8.dp))
                             Text(L("تعذّر جلب الفيديو"), color = cs.error, fontWeight = FontWeight.Bold)
                         }
-                        Text(err ?: "", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        Text(err ?: "", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 7, overflow = TextOverflow.Ellipsis)
                         Row(
                             Modifier.clip(CircleShape).background(cs.tertiary).clickable { attempt++ }.padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically
