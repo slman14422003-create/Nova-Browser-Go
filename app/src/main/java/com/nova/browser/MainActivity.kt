@@ -844,6 +844,15 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
         } else pageTyping = false
         wasBlocked = blocked
     }
+    // بعد انكماش الصفحة فوق الكيبورد: نمرّر خانة الإدخال الفعّالة إلى منتصف الصفحة كي لا يغطيها الكيبورد (خانة المحادثة أسفل الصفحة)
+    LaunchedEffect(pageTyping, imeSettled.value) {
+        if (pageTyping && imeSettled.value > 0) {
+            kotlinx.coroutines.delay(120)
+            tab.webView?.evaluateJavascript(
+                "(function(){var e=document.activeElement;if(e&&e!==document.body&&e.scrollIntoView)e.scrollIntoView({block:'center',behavior:'auto'})})()", null
+            )
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         Surface(Modifier.fillMaxSize(), color = cs.background) {

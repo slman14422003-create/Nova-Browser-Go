@@ -70,12 +70,81 @@ class YtInfo(val title: String, val author: String, val videos: List<YtOpt>, val
  * بلا أي اعتماد على تابع حديث) — صفر تعقيد فك تشفير على الجهاز، فيعمل من أندرويد 7 فصاعداً.
  */
 object YtFetch {
-    // عدّة خوادم عامة بالترتيب: إذا فشل أول واحد (تعطّل/إبطاء) يجرَّب التالي تلقائياً.
+    // خوادم Piped العامة. تتعطّل أو تُحجب من وقت لآخر، فالقائمة طويلة والتجربة تلقائية؛ آخر خادم نجح يُجرَّب أولاً.
+    // إن تعطّلت كلها تُجلب القائمة الحيّة من piped-instances ثم تُجرَّب (انظر liveInstances).
     private val INSTANCES = listOf(
         "https://pipedapi.kavin.rocks",
         "https://pipedapi.adminforge.de",
+        "https://api.piped.private.coffee",
+        "https://pipedapi.leptons.xyz",
+        "https://pipedapi.nosebs.ru",
+        "https://piped-api.privacy.com.de",
+        "https://pipedapi.owo.si",
+        "https://pipedapi.ducks.party",
+        "https://pipedapi.reallyaweso.me",
+        "https://pipedapi.darkness.services",
+        "https://pipedapi.orangenet.cc",
         "https://pipedapi.r4fo.com",
     )
+    @Volatile private var lastGood: String? = null
+    @Volatile private var live: List<String>? = null
+
+    /**
+     * عميل شبكة بدقّة DNS احتياطية: أخطاء مثل «Unable to resolve host» تحدث عندما يحجب مزوّد الإنترنت/الشبكة
+     * اسم النطاق أو يفشل DNS الجهاز. عند الفشل نسأل DNS-over-HTTPS (Cloudflare ثم Google بعنوان IP مباشر،
+     * فلا يحتاج الطلب نفسه إلى DNS) ونتصل بالعنوان الناتج مع إبقاء اسم النطاق للشهادة (TLS/SNI).
+     */
+    private val client: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .dns(DohFallbackDns)
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+
+    private object DohFallbackDns : okhttp3.Dns {
+        private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<java.net.InetAddress>>>()
+        private val servers = listOf(
+            "https://1.1.1.1/dns-query?type=A&name=",
+            "https://8.8.8.8/resolve?type=A&name=",
+            "https://dns.google/resolve?type=A&name=",
+        )
+
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            try {
+                return okhttp3.Dns.SYSTEM.lookup(hostname)
+            } catch (e: java.net.UnknownHostException) {
+                val c = cache[hostname]
+                if (c != null && System.currentTimeMillis() - c.first < 10 * 60_000L) return c.second
+                val r = doh(hostname)
+                if (r.isNotEmpty()) { cache[hostname] = System.currentTimeMillis() to r; return r }
+                throw e
+            }
+        }
+
+        private fun doh(host: String): List<java.net.InetAddress> {
+            for (base in servers) {
+                try {
+                    val c = URL(base + java.net.URLEncoder.encode(host, "UTF-8")).openConnection() as HttpURLConnection
+                    try {
+                        c.connectTimeout = 4000; c.readTimeout = 4000
+                        c.setRequestProperty("Accept", "application/dns-json")
+                        if (c.responseCode !in 200..299) continue
+                        val ans = JSONObject(c.inputStream.bufferedReader().use { it.readText() }).optJSONArray("Answer") ?: continue
+                        val out = ArrayList<java.net.InetAddress>()
+                        for (i in 0 until ans.length()) {
+                            val o = ans.getJSONObject(i)
+                            if (o.optInt("type") == 1) out.add(java.net.InetAddress.getByName(o.optString("data")))   // عنوان IPv4 نصّي: لا DNS هنا
+                        }
+                        if (out.isNotEmpty()) return out
+                    } finally { c.disconnect() }
+                } catch (_: Exception) {}
+            }
+            return emptyList()
+        }
+    }
 
     /** يستخرج معرّف الفيديو ويبني رابط watch نظيفاً (يتخلص من list/pp/start_radio وروابط m. وshorts). */
     fun canonical(u: String): String {
@@ -91,30 +160,62 @@ object YtFetch {
         return "https://www.youtube.com/watch?v=$id"
     }
 
-    private fun get(base: String, id: String): String {
-        val c = URL("$base/streams/$id").openConnection() as HttpURLConnection
-        try {
-            c.connectTimeout = 15000; c.readTimeout = 20000
-            c.setRequestProperty("User-Agent", YT_UA)
-            val code = c.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code")
-            return c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally { c.disconnect() }
+    private fun httpGet(url: String, timeoutSec: Long? = null): String {
+        val cl = if (timeoutSec == null) client else client.newBuilder().callTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS).build()
+        val req = okhttp3.Request.Builder().url(url).header("User-Agent", YT_UA).header("Accept", "application/json").build()
+        cl.newCall(req).execute().use { r ->
+            val body = r.body.string()
+            if (!r.isSuccessful) {
+                val msg = runCatching { JSONObject(body).optString("message").take(80) }.getOrDefault("")
+                throw IOException("HTTP ${r.code}" + if (msg.isNotBlank()) " — $msg" else "")
+            }
+            return body
+        }
+    }
+
+    /** قائمة الخوادم الحيّة (تُجلب مرة واحدة فقط وعند الحاجة): كل ما له api_url من piped-instances. */
+    private fun liveInstances(): List<String> {
+        live?.let { return it }
+        val list = runCatching {
+            val arr = JSONArray(httpGet("https://piped-instances.kavin.rocks/", 8))
+            (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optString("api_url").trimEnd('/').takeIf { u -> u.startsWith("https://") } }
+        }.getOrDefault(emptyList())
+        live = list
+        return list
     }
 
     fun info(url: String): YtInfo {
         val id = canonical(url).substringAfter("v=")
-        var lastErr: Exception? = null
-        for (base in INSTANCES) {
-            try { return parse(get(base, id)) } catch (e: Exception) { lastErr = e }
+        val errors = ArrayList<String>()
+        val tried = HashSet<String>()
+        fun attempt(base: String): YtInfo? {
+            if (!tried.add(base)) return null
+            return try {
+                parse(httpGet("$base/streams/$id")).also { lastGood = base }
+            } catch (e: Exception) {
+                val m = e.message ?: e.javaClass.simpleName
+                errors.add(base.removePrefix("https://") + ": " + m)
+                YtLog.add("piped $base -> $m")
+                if (lastGood == base) lastGood = null
+                null
+            }
         }
-        throw lastErr ?: IOException(L("تعذّر الاتصال بخادم الاستخراج"))
+        lastGood?.let { g -> attempt(g)?.let { return it } }
+        for (base in INSTANCES) attempt(base)?.let { return it }
+        // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)
+        for (base in liveInstances().filter { it !in tried }.take(8)) attempt(base)?.let { return it }
+        val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
+        throw IOException(
+            (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +
+                "\n" + errors.takeLast(2).joinToString("\n")
+        )
     }
 
     private class A(val url: String, val bitrateK: Int, val ext: String)
 
     private fun parse(json: String): YtInfo {
         val j = JSONObject(json)
+        if (j.has("error")) throw IOException(j.optString("message").ifBlank { j.optString("error") }.take(80))
         val audioArr = j.optJSONArray("audioStreams") ?: JSONArray()
         val videoArr = j.optJSONArray("videoStreams") ?: JSONArray()
 

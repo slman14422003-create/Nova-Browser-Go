@@ -238,6 +238,20 @@ try {
       if (v.duration - v.currentTime > 20 && v.currentTime > 15) savePos(id, v.currentTime, false);
     }, true);
 
+    // ───────── «هل ما زلت تشاهد؟» / «متابعة المشاهدة؟»: يضغط «نعم» تلقائياً كي لا يتوقف التشغيل الطويل (موسيقى/دروس) ─────────
+    // فحص خفيف كل 6 ثوانٍ فقط والصفحة ظاهرة وفي صفحة مشاهدة؛ لا يلمس الإعلانات.
+    setInterval(function () {
+      try {
+        if (document.hidden || !watch()) return;
+        var d = document.querySelector('ytm-confirm-dialog-renderer,yt-confirm-dialog-renderer,tp-yt-paper-dialog[role=dialog]');
+        if (!d || !/still watching|continue watching|هل ما زلت|متابعة المشاهدة/i.test(d.textContent || '')) return;
+        var bs = d.querySelectorAll('button');
+        for (var i = 0; i < bs.length; i++) {
+          if (/^(yes|continue|نعم|متابعة)/i.test((bs[i].textContent || '').trim())) { bs[i].click(); break; }
+        }
+      } catch (e) {}
+    }, 6000);
+
     // ───────── ضغط مطوّل على المشغّل = ×2 مؤقتاً (يعود عند الرفع) ─────────
     if (P.hold) (function () {
       var timer = 0, sx = 0, sy = 0, prev = 1, badge = null;

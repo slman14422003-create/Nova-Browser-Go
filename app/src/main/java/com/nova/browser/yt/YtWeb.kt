@@ -102,6 +102,7 @@ object YtWeb {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING))
             runCatching { WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, false) }
         isScrollbarFadingEnabled = true
+        isVerticalScrollBarEnabled = false; isHorizontalScrollBarEnabled = false   // شريط التمرير يُرسم فوق الصفحة ويكلّف إطاراً إضافياً
         overScrollMode = View.OVER_SCROLL_NEVER
         Wv.autofill(this, false)
         WebSupport.configure(this)               // أولوية العملية + مراقبة التجمّد + إزالة X-Requested-With
