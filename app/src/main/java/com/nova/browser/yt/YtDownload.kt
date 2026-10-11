@@ -36,11 +36,16 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 
+/** عميل «ANDROID_VR» (InnerTube): يعيد روابط تنزيل مباشرة بلا تشفير توقيع ولا PO token، فلا حاجة لمكتبة فك تشفير ولا لخوادم وسيطة. */
+const val YT_VR_VER = "1.60.19"
+const val YT_VR_UA = "com.google.android.apps.youtube.vr.oculus/$YT_VR_VER (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
 const val YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
 /** هل الرابط صفحة فيديو يوتيوب (مشاهدة/شورتس/بث)؟ */
@@ -184,6 +189,51 @@ object YtFetch {
         return list
     }
 
+    /** استخراج مباشر من يوتيوب (من جوال المستخدم نفسه، فالروابط مرتبطة بعنوانه). يعيد JSON بنفس شكل Piped ليُحلَّل بـ parse(). */
+    private fun innertube(id: String): String {
+        val body = JSONObject().put("videoId", id).put("contentCheckOk", true).put("racyCheckOk", true)
+            .put("context", JSONObject().put("client", JSONObject()
+                .put("clientName", "ANDROID_VR").put("clientVersion", YT_VR_VER)
+                .put("deviceMake", "Oculus").put("deviceModel", "Quest 3")
+                .put("osName", "Android").put("osVersion", "12L").put("androidSdkVersion", 32)
+                .put("hl", "en").put("gl", "US")))
+        val req = okhttp3.Request.Builder().url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .header("User-Agent", YT_VR_UA).header("X-YouTube-Client-Name", "28").header("X-YouTube-Client-Version", YT_VR_VER)
+            .header("Origin", "https://www.youtube.com")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+        client.newCall(req).execute().use { r ->
+            val txt = r.body.string()
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+            val j = JSONObject(txt)
+            val ps = j.optJSONObject("playabilityStatus")
+            val st = ps?.optString("status") ?: ""
+            if (st != "OK") throw IOException("$st " + (ps?.optString("reason") ?: "").take(90))
+            val sd = j.optJSONObject("streamingData") ?: throw IOException("no streamingData")
+            val vs = JSONArray(); val au = JSONArray()
+            sd.optJSONArray("formats")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val o = a.getJSONObject(i); val u = o.optString("url"); val m = o.optString("mimeType")
+                    if (u.isBlank() || !m.startsWith("video/mp4")) continue   // بلا url = مشفّر بتوقيع (غير مدعوم)
+                    vs.put(JSONObject().put("url", u).put("mimeType", m).put("quality", o.optString("qualityLabel").ifBlank { "video" }).put("videoOnly", false))
+                }
+            }
+            sd.optJSONArray("adaptiveFormats")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val o = a.getJSONObject(i); val u = o.optString("url"); val m = o.optString("mimeType")
+                    if (u.isBlank()) continue
+                    when {
+                        m.startsWith("video/mp4") && m.contains("avc1") ->   // H.264 فقط: يعمل مع الدمج وكل المشغّلات
+                            vs.put(JSONObject().put("url", u).put("mimeType", m).put("quality", o.optString("qualityLabel").ifBlank { "video" }).put("videoOnly", true))
+                        m.startsWith("audio/") -> au.put(JSONObject().put("url", u).put("mimeType", m).put("bitrate", o.optInt("bitrate", 0)))
+                    }
+                }
+            }
+            val vd = j.optJSONObject("videoDetails")
+            return JSONObject().put("title", vd?.optString("title") ?: "").put("uploader", vd?.optString("author") ?: "")
+                .put("duration", vd?.optString("lengthSeconds")?.toLongOrNull() ?: 0L).put("videoStreams", vs).put("audioStreams", au).toString()
+        }
+    }
+
     fun info(url: String): YtInfo {
         val id = canonical(url).substringAfter("v=")
         val errors = ArrayList<String>()
@@ -200,6 +250,12 @@ object YtFetch {
                 null
             }
         }
+        var ytErr = ""
+        try {
+            val r = parse(innertube(id))
+            if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
+            ytErr = "no downloadable formats"
+        } catch (e: Exception) { ytErr = e.message ?: e.javaClass.simpleName; YtLog.add("innertube -> $ytErr") }
         val px = BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }
         px?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
         val proxyErr = px?.let { p -> errors.firstOrNull { it.startsWith(p.removePrefix("https://")) } }
@@ -210,7 +266,7 @@ object YtFetch {
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
             (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +
-                "\n" + (proxyErr?.let { "Worker → " + it.substringAfter(": ") + "\n" } ?: "") + errors.takeLast(1).joinToString("\n")
+                "\nYouTube → " + ytErr + "\n" + (proxyErr?.let { "Worker → " + it.substringAfter(": ") + "\n" } ?: "") + errors.takeLast(1).joinToString("\n")
         )
     }
 
@@ -271,13 +327,13 @@ object YtDownload {
         val f = o.fmt
         if (f != null) {
             // تنزيل المصدر ثم التحويل إلى الصيغة المطلوبة (يُستدعى الـ callback على خيط خلفي)
-            Downloader.startNamed(ctx, o.url, YT_UA, ref, "$base [source].${o.ext}", o.mime) { t ->
+            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [source].${o.ext}", o.mime) { t ->
                 AudioConvert.run(ctx.applicationContext, base, info.title, info.author, t, f)
             }
             return
         }
         if (o.audioUrl == null) {
-            Downloader.startNamed(ctx, o.url, YT_UA, ref, "$base.${o.ext}", o.mime)
+            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base.${o.ext}", o.mime)
             return
         }
         val holder = arrayOfNulls<DlTask>(2)
@@ -290,8 +346,8 @@ object YtDownload {
                 }.start()
             }
         }
-        holder[0] = Downloader.startNamed(ctx, o.url, YT_UA, ref, "$base [video].mp4", "video/mp4", finish)
-        holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_UA, ref, "$base [audio].m4a", "audio/mp4", finish)
+        holder[0] = Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [video].mp4", "video/mp4", finish)
+        holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_VR_UA, ref, "$base [audio].m4a", "audio/mp4", finish)
     }
 
     private fun runMux(app: Context, base: String, v: DlTask, a: DlTask) {
