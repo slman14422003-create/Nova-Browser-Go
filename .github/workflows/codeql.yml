@@ -35,7 +35,7 @@ jobs:
         uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
       - if: matrix.build-mode == 'manual'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with: { gradle-version: '9.4.1', cache-read-only: true }
 
       - uses: github/codeql-action/init@v4
