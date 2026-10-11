@@ -187,6 +187,8 @@ object I18n {
         "تعديل" to "Edit",
         "تعذّر التحقق من الهوية" to "Could not verify identity",
         "تعذّر جلب الفيديو" to "Could not load the video",
+        "تعذّر الاتصال بخوادم الاستخراج حالياً." to "Could not reach the extraction servers right now.",
+        "تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN." to "Could not reach the extraction servers (DNS failure) — try another network or a VPN.",
         "تقديم 10 ثوانٍ" to "Forward 10 seconds",
         "تم حفظ كلمة المرور" to "Password saved",
         "تنزيل من يوتيوب" to "Download from YouTube",
