@@ -2,4 +2,6 @@
 <resources>
     <string name="dl_err_tls">Secure connection failed. Check that the device date and time are correct, turn off any VPN or filtering DNS, then try again.</string>
     <string name="dl_err_tls_hint">If it keeps failing, switch to another network.</string>
+    <string name="conv_start">Converting to MP3...</string>
+    <string name="conv_fail">Conversion failed. The original file was kept.</string>
 </resources>

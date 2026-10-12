@@ -60,6 +60,7 @@ class DlTask(
     var lastBytes = 0L
     var lastTime = 0L
     var forcedName: String? = null                    // اسم ملف مفروض (مثل تنزيلات يوتيوب)
+    @Volatile var diag = ""
     @Volatile var refresher: (() -> String?)? = null
     @Volatile var connLimit = 0
     val refreshes = AtomicInteger(0)
@@ -90,7 +91,7 @@ object Downloader {
 
     @Volatile private var engineOn = false
 
-    private fun str(id: Int): String = runCatching {
+    fun str(id: Int): String = runCatching {
         val cfg = android.content.res.Configuration(app.resources.configuration)
         cfg.setLocale(java.util.Locale.forLanguageTag(I18n.code()))
         app.createConfigurationContext(cfg).getString(id)
@@ -350,8 +351,13 @@ object Downloader {
                 val (conn, _) = connect(t, usedUrlOf, range)
                 c = conn
                 val code = conn.responseCode
-                if (t.resumable && code != 206) throw IOException("HTTP $code")
-                if (!t.resumable && code !in 200..299) throw IOException("HTTP $code")
+                if ((t.resumable && code != 206) || (!t.resumable && code !in 200..299)) {
+                    t.diag = "host=" + (runCatching { Uri.parse(usedUrlOf).host }.getOrNull() ?: "").take(30) +
+                        " c=" + runCatching { Uri.parse(usedUrlOf).getQueryParameter("c") }.getOrNull() +
+                        " srv=" + conn.getHeaderField("Server") + " body=" + conn.peek().take(120)
+                    YtLog.add("http $code " + t.diag)
+                    throw IOException("HTTP $code")
+                }
                 conn.inputStream.use { ins ->
                     while (t.stopReason == 0) {
                         val n = ins.read(buf)
@@ -404,7 +410,7 @@ object Downloader {
             else -> {
                 val complete = t.segs.isNotEmpty() && t.segs.all { it.remaining <= 0 } &&
                     (t.total <= 0 || downloadedOf(t) >= t.total)
-                if (complete) markDone(t) else fail(t, t.error.ifBlank { L("فشل التنزيل") })
+                if (complete) markDone(t) else fail(t, t.error.ifBlank { L("فشل التنزيل") } + (if (t.diag.isBlank()) "" else "\n" + t.diag))
             }
         }
     }
@@ -532,6 +538,7 @@ class Conn(private val resp: okhttp3.Response) {
     fun getHeaderField(name: String): String? = resp.header(name)
     val inputStream: java.io.InputStream get() = resp.body.byteStream()
     fun disconnect() { runCatching { resp.close() } }
+    fun peek(): String = runCatching { resp.peekBody(200).string().replace('\n', ' ') }.getOrDefault("")
 }
 
 fun isGoogleVideo(url: String): Boolean {

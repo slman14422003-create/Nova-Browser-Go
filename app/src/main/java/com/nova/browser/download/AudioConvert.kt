@@ -1,23 +1,166 @@
 package com.nova.browser
 
 import android.content.Context
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import java.io.BufferedOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.nio.ByteOrder
 
-/**
- * صيغ الصوت المحوَّلة (MP3/OGG/FLAC…) كانت تعتمد على FFmpeg، وهو مكتبة native ضخمة (عشرات الميغابايت) لا تعمل على أندرويد 6
- * ولا تناسب أجهزة Android Go. في نسخة Go تُقدَّم الملفات الصوتية الأصلية بلا تحويل (M4A / WebM Opus) وهي الأسرع والأعلى جودة.
- * تبقى الأنواع هنا فارغة حتى لا تتغير بقية الشيفرة (واجهة تنزيل يوتيوب تقرأ AudioFormats.all).
- */
 class AudioFmt(
     val label: String, val sub: String, val ext: String, val mime: String,
     val container: String, val codecArgs: List<String>, val id3: Boolean = false
 )
 
 object AudioFormats {
-    val all: List<AudioFmt> = emptyList()
+    private val mp3: List<AudioFmt> = listOf(128, 192, 320).map { k ->
+        AudioFmt("MP3 - $k kbps", "MP3 (LAME)", "mp3", "audio/mpeg", "mp3", listOf(k.toString()))
+    }
+    val all: List<AudioFmt> get() = if (Mp3Lame.available) mp3 else emptyList()
+}
+
+object Mp3Lame {
+    private const val PKG = "com.naman14.androidlame"
+
+    val available: Boolean by lazy {
+        runCatching { Class.forName("$PKG.LameBuilder"); Class.forName("$PKG.AndroidLame"); true }.getOrDefault(false)
+    }
+
+    class Enc(private val obj: Any) {
+        private val cls = obj.javaClass
+        private val encodeM = cls.getMethod("encode", ShortArray::class.java, ShortArray::class.java, Int::class.javaPrimitiveType, ByteArray::class.java)
+        private val flushM = listOf("flush", "lameFlush").firstNotNullOfOrNull { n -> runCatching { cls.getMethod(n, ByteArray::class.java) }.getOrNull() }
+            ?: throw NoSuchMethodException("flush")
+        private val closeM = runCatching { cls.getMethod("close") }.getOrNull()
+
+        fun encode(l: ShortArray, r: ShortArray, n: Int, out: ByteArray): Int = encodeM.invoke(obj, l, r, n, out) as Int
+        fun flush(out: ByteArray): Int = flushM.invoke(obj, out) as Int
+        fun close() { closeM?.invoke(obj) }
+    }
+
+    fun create(sampleRate: Int, channels: Int, kbps: Int): Enc {
+        val bc = Class.forName("$PKG.LameBuilder")
+        val b = bc.getConstructor().newInstance()
+        val intT = Int::class.javaPrimitiveType
+        fun set(name: String, v: Int) { bc.getMethod(name, intT).invoke(b, v) }
+        set("setInSampleRate", sampleRate)
+        set("setOutChannels", minOf(channels, 2))
+        set("setOutBitrate", kbps)
+        set("setOutSampleRate", sampleRate)
+        runCatching { set("setQuality", if (LowEnd.on) 7 else 5) }
+        return Enc(bc.getMethod("build").invoke(b)!!)
+    }
 }
 
 object AudioConvert {
-    /** لا تحويل في نسخة Go: يبقى الملف الأصلي كما نُزِّل. */
     @Suppress("UNUSED_PARAMETER")
-    fun run(app: Context, base: String, title: String, artist: String, src: DlTask, fmt: AudioFmt) = Unit
+    fun run(app: Context, base: String, title: String, artist: String, src: DlTask, fmt: AudioFmt) {
+        val ui = Handler(Looper.getMainLooper())
+        val srcUri = src.uri ?: return
+        ui.post { toast(app, Downloader.str(R.string.conv_start)) }
+        val r = app.contentResolver
+        var out: Uri? = null
+        try {
+            val kbps = fmt.codecArgs.firstOrNull()?.toIntOrNull() ?: 128
+            val dst = Storage.create(app, "$base.mp3", fmt.mime)
+            out = dst
+            val os = r.openOutputStream(dst) ?: throw IOException("no output")
+            os.use { encode(app, srcUri, BufferedOutputStream(it, 64 * 1024), kbps) }
+            Storage.finish(app, dst, fmt.mime)
+            val size = r.openFileDescriptor(dst, "r")?.use { it.statSize } ?: -1L
+            Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.mp3", dst, fmt.mime, size)
+            Downloader.removeOnMain(src, true)
+        } catch (e: Throwable) {
+            out?.let { runCatching { Storage.delete(app, it) } }
+            YtLog.add("mp3 convert failed: $e")
+            ui.post { toast(app, Downloader.str(R.string.conv_fail)) }
+        }
+    }
+
+    private fun encode(app: Context, src: Uri, os: OutputStream, kbps: Int) {
+        val ex = MediaExtractor()
+        try {
+            app.contentResolver.openFileDescriptor(src, "r")!!.use { pfd ->
+                ex.setDataSource(pfd.fileDescriptor)
+                val ti = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+                val fmt = ex.getTrackFormat(ti)
+                ex.selectTrack(ti)
+                val c = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
+                var enc: Mp3Lame.Enc? = null
+                try {
+                    c.configure(fmt, null, null, 0)
+                    c.start()
+                    var sr = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    var ch = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    val info = MediaCodec.BufferInfo()
+                    var mp3 = ByteArray(0)
+                    var inDone = false
+                    var outDone = false
+                    while (!outDone) {
+                        if (!inDone) {
+                            val ii = c.dequeueInputBuffer(10_000)
+                            if (ii >= 0) {
+                                val ib = c.getInputBuffer(ii)!!
+                                val n = ex.readSampleData(ib, 0)
+                                if (n < 0) {
+                                    c.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                    inDone = true
+                                } else {
+                                    c.queueInputBuffer(ii, 0, n, ex.sampleTime, 0)
+                                    ex.advance()
+                                }
+                            }
+                        }
+                        val oi = c.dequeueOutputBuffer(info, 10_000)
+                        if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            val of = c.outputFormat
+                            if (of.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sr = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                            if (of.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        } else if (oi >= 0) {
+                            if (info.size > 0) {
+                                val e = enc ?: Mp3Lame.create(sr, ch, kbps).also { enc = it }
+                                val ob = c.getOutputBuffer(oi)!!
+                                ob.position(info.offset)
+                                ob.limit(info.offset + info.size)
+                                val sb = ob.order(ByteOrder.nativeOrder()).asShortBuffer()
+                                val frames = sb.remaining() / ch
+                                val l = ShortArray(frames)
+                                val rr = if (ch >= 2) ShortArray(frames) else l
+                                for (i in 0 until frames) {
+                                    l[i] = sb.get()
+                                    if (ch >= 2) {
+                                        rr[i] = sb.get()
+                                        for (k in 2 until ch) sb.get()
+                                    }
+                                }
+                                val need = (frames * 1.25).toInt() + 7200
+                                if (mp3.size < need) mp3 = ByteArray(need)
+                                val n = e.encode(l, rr, frames, mp3)
+                                if (n < 0) throw IOException("lame $n")
+                                if (n > 0) os.write(mp3, 0, n)
+                            }
+                            c.releaseOutputBuffer(oi, false)
+                            if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true
+                        }
+                    }
+                    val e = enc ?: throw IOException("no audio")
+                    if (mp3.size < 7200) mp3 = ByteArray(7200)
+                    val n = e.flush(mp3)
+                    if (n > 0) os.write(mp3, 0, n)
+                    os.flush()
+                } finally {
+                    runCatching { c.stop() }
+                    runCatching { c.release() }
+                    runCatching { enc?.close() }
+                }
+            }
+        } finally {
+            runCatching { ex.release() }
+        }
+    }
 }

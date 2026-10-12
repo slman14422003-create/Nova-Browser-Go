@@ -31,3 +31,12 @@
 - Empty error text now shows the exception class name.
 - Audio list now shows every available stream (M4A AAC / WebM Opus at each bitrate).
 - MP3 still pending (needs an encoder library).
+
+## Task 5: MP3 conversion
+- Dependency: com.github.NorthernCaptain:TAndroidLame:1.1 (JitPack, LAME JNI wrapper). Package assumed com.naman14.androidlame; used through reflection (Mp3Lame in download/AudioConvert.kt) so a mismatch cannot break compilation; MP3 options are hidden when the library or its native .so is missing.
+- Flow: download the AAC m4a, decode with MediaCodec, encode with LAME (128/192/320 kbps), save as .mp3, delete the source. On failure the m4a is kept and a message is shown.
+- ProGuard keeps com.naman14.androidlame.**.
+- Risks to verify on first build: JitPack artifact resolves; arm64-v8a .so exists (and 16KB alignment on Android 15+ devices); wrapper license is GPLv3.
+
+## Task 6: diagnostics for 403
+- On a rejected range request the failure text now ends with: host, client (c=), Server header and first 120 chars of the response body (also in YtLog). Use it to identify the real cause (PO token, IP mismatch, expired link).

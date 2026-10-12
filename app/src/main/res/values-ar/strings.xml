@@ -2,4 +2,6 @@
 <resources>
     <string name="dl_err_tls">فشل الاتصال الآمن. تأكد من صحة تاريخ ووقت الجهاز، وأوقف أي VPN أو DNS مُرشِّح، ثم أعد المحاولة.</string>
     <string name="dl_err_tls_hint">إن استمر الفشل جرّب شبكة أخرى.</string>
+    <string name="conv_start">جارٍ التحويل إلى MP3...</string>
+    <string name="conv_fail">فشل التحويل. تم الاحتفاظ بالملف الأصلي.</string>
 </resources>

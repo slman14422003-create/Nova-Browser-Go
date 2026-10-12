@@ -339,7 +339,7 @@ object YtFetch {
             val m4 = a.ext == "m4a"
             audios.add(YtOpt((if (m4) "M4A AAC" else "WebM Opus") + " - ${a.bitrateK} kbps", if (m4) L("الملف الأصلي AAC بلا تحويل") else L("الملف الأصلي Opus بلا تحويل"), a.url, a.ext, if (m4) "audio/mp4" else "audio/webm"))
         }
-        (aac ?: opus)?.let { src -> AudioFormats.all.forEach { f -> audios.add(YtOpt(f.label, f.sub, src.url, src.ext, if (src.ext == "m4a") "audio/mp4" else "audio/webm", null, f)) } }
+        (aac ?: opus)?.let { src -> AudioFormats.all.forEachIndexed { idx, f -> audios.add(idx, YtOpt(f.label, f.sub, src.url, src.ext, if (src.ext == "m4a") "audio/mp4" else "audio/webm", null, f)) } }
 
         return YtInfo(j.optString("title"), j.optString("uploader"), videos, audios, j.optLong("duration"))
     }
@@ -356,6 +356,11 @@ object YtDownload {
             // تنزيل المصدر ثم التحويل إلى الصيغة المطلوبة (يُستدعى الـ callback على خيط خلفي)
             Downloader.startNamed(ctx, o.url, ytUaFor(o.url), ref, "$base [source].${o.ext}", o.mime) { t ->
                 AudioConvert.run(ctx.applicationContext, base, info.title, info.author, t, f)
+            }.also {
+                it.connLimit = 1
+                it.refresher = {
+                    pageUrl?.let { u -> runCatching { YtFetch.info(u) }.getOrNull() }?.audios?.firstOrNull { a -> a.fmt == null && a.ext == o.ext }?.url
+                }
             }
             return
         }
