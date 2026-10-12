@@ -277,13 +277,17 @@ object YtFetch {
             }
         }
         var ytErr = ""
-        if (!directBlocked()) for (c in CLIENTS) {
-            try {
-                val r = parse(innertube(id, c))
-                if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
-                ytErr = "${c.name}: no downloadable formats"
-            } catch (e: Exception) { ytErr = "${c.name}: " + (e.message ?: e.javaClass.simpleName); YtLog.add("innertube $ytErr") }
+        fun runDirect(): YtInfo? {
+            for (c in CLIENTS) {
+                try {
+                    val r = parse(innertube(id, c))
+                    if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
+                    ytErr = "${c.name}: no downloadable formats"
+                } catch (e: Exception) { ytErr = "${c.name}: " + (e.message ?: e.javaClass.simpleName); YtLog.add("innertube $ytErr") }
+            }
+            return null
         }
+        if (!directBlocked()) runDirect()?.let { return it }
         val px = BuildConfig.YT_PROXY.trim().trimEnd('/').takeIf { it.startsWith("https://") }
         px?.let { attempt(it)?.let { r -> return r } }   // بروكسي المستخدم (Worker) أولاً
         val proxyErr = px?.let { p -> errors.firstOrNull { it.startsWith(p.removePrefix("https://")) } }
@@ -291,6 +295,7 @@ object YtFetch {
         for (base in INSTANCES) attempt(base)?.let { return it }
         // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)
         for (base in liveInstances().filter { it !in tried }.take(8)) attempt(base)?.let { return it }
+        if (directBlocked()) runDirect()?.let { return it }   // last resort: proxy paths all failed
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
             (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +
