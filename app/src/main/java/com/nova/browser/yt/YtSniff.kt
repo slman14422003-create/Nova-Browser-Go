@@ -63,6 +63,12 @@ object YtSniff {
                     vs.put(JSONObject().put("url", h.url).put("mimeType", h.mime).put("quality", QUALITY[h.itag]).put("videoOnly", h.itag !in MUXED))
             }
         }
+        if (au.length() == 0) {
+            // Muxed progressive links (itag 18/22) carry an AAC track: use one as the audio source (M4A and MP3 conversions read its audio track).
+            g.hits.values.filter { it.itag in MUXED }.minByOrNull { it.itag }?.let { h ->
+                au.put(JSONObject().put("url", h.url).put("mimeType", "audio/mp4").put("bitrate", 128000))
+            }
+        }
         if (vs.length() == 0 && au.length() == 0) return null
         return JSONObject().put("title", title).put("uploader", author).put("duration", dur)
             .put("videoStreams", vs).put("audioStreams", au).toString()
