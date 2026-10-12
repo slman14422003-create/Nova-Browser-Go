@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
     var inPip by mutableStateOf(false)
     var pipAuto = false
     var fullscreenActive = false
+    private var genericPip = false
     var wvProvider: () -> WebView? = { null }
 
     private val PIP_PLAY = "nova.pip.play"
@@ -184,7 +185,10 @@ class MainActivity : ComponentActivity() {
         pipExitAt = 0L
         inPip = pipNowActive()   // لا نترك الحالة عالقة إن فاتنا إشعار الخروج من المنبثقة
         YtWeb.pip = inPip
-        if (!inPip) { val w = wvProvider(); YtWeb.background(w, false); if (YtWeb.owns(w)) YtWeb.recover(w) }   // تنظيف أنماط المنبثقة إن بقيت
+        if (!inPip) {
+            val w = wvProvider(); YtWeb.background(w, false); if (YtWeb.owns(w)) YtWeb.recover(w)
+            if (genericPip) { genericPip = false; w?.evaluateJavascript("window.__novaMediaCtl&&window.__novaMediaCtl('pip:0')", null) }
+        }   // تنظيف أنماط المنبثقة إن بقيت
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -218,8 +222,13 @@ class MainActivity : ComponentActivity() {
         val w = wvProvider() ?: return
         if (YtWeb.owns(w)) YtWeb.onPip(w, isInPictureInPictureMode, fullscreenActive)
         else {
-            if (isInPictureInPictureMode) { w.resumeTimers(); w.onResume() }
-            else { w.postDelayed({ w.requestLayout(); w.invalidate() }, 150) }
+            if (isInPictureInPictureMode) {
+                w.resumeTimers(); w.onResume()
+                if (!fullscreenActive) { genericPip = true; w.evaluateJavascript("window.__novaMediaCtl&&window.__novaMediaCtl('pip:1')", null) }
+            } else {
+                if (genericPip) { genericPip = false; w.evaluateJavascript("window.__novaMediaCtl&&window.__novaMediaCtl('pip:0')", null) }
+                w.postDelayed({ w.requestLayout(); w.invalidate() }, 150)
+            }
         }
     }
 
@@ -822,7 +831,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
             val barH = if (site != null) Pwa.BAR_H.dp else 0.dp
             // لون شريط الحالة يتبع لون شريط الموقع (كان خلفية سادة بينما الشريط مائل للون الهوية)
             AnimatedVisibility(visible = site != null, enter = fadeIn(tween(Adaptive.ms(160))), exit = fadeOut(tween(Adaptive.ms(120)))) { StatusBarWash() }
-            Box(Modifier.fillMaxSize().statusBarsPadding().displayCutoutPadding()) {
+            Box(Modifier.fillMaxSize().then(if (inPip) Modifier else Modifier.statusBarsPadding().displayCutoutPadding())) {
                 Box(Modifier.fillMaxSize().padding(top = barH).pageInsets({ imeSettled.value }, navInsets, pageTyping, inPip).background(cs.background)) {
                     AnimatedContent(
                         targetState = tab.id to tab.url.isBlank(),
@@ -894,7 +903,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                             info = si, progress = tab.progress, loading = tab.loading,
                             onReload = { tab.webView?.reload() }, onShare = { shareText(activity, tab.url) }, onTitleTap = { Pwa.scrollTop(tab.webView) },
                             onPip = if (si.kind == SiteKind.YT_VIDEO) ({ mainAct?.enterPip() }) else null,
-                            onDownload = if (si.kind == SiteKind.YT_VIDEO) ({ ytUrl = tab.url }) else null
+                            onDownload = if (si.kind == SiteKind.YT_VIDEO) ({ tab.webView?.let { YtSniff.view = java.lang.ref.WeakReference(it) }; ytUrl = tab.url }) else null
                         )
                     }
                 }

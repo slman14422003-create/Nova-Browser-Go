@@ -281,7 +281,8 @@ object YtFetch {
                 val o = JSONObject(httpGet("https://www.youtube.com/oembed?format=json&url=" + java.net.URLEncoder.encode(canonical(url), "UTF-8"), 5))
                 o.optString("title") to o.optString("author_name")
             }.getOrNull()
-            YtSniff.json(meta?.first ?: "YouTube video", meta?.second ?: "")?.let { j -> runCatching { parse(j) }.getOrNull()?.let { r -> if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r } }
+            runCatching { YtSniff.probe(id) }
+            YtSniff.json(meta?.first ?: "YouTube video", meta?.second ?: "", id)?.let { j -> runCatching { parse(j) }.getOrNull()?.let { r -> if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r } }
         }
         var ytErr = ""
         fun runDirect(): YtInfo? {

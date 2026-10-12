@@ -105,7 +105,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
             Library.visit(u, v.title)   // سجل التصفح
         }
         override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
-            YtSniff.onRequest(r)
+            YtSniff.onRequest(r, tab.url)
             return Shield.intercept(tab.shieldHost, r.url, r.isForMainFrame) ?: Perf.intercept(r.url, r.isForMainFrame)
         }
         override fun onRenderProcessGone(v: WebView, d: RenderProcessGoneDetail): Boolean {

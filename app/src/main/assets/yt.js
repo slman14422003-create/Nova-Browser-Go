@@ -526,6 +526,33 @@ try {
     stateSoon();
   };
 
+  window.__novaProbe = function (want) {
+    var e = v(), mp = document.getElementById('movie_player');
+    if (!e || !mp || !mp.getAvailableQualityLevels) return 'none';
+    try { var cur = mp.getVideoData && mp.getVideoData().video_id; if (want && cur && cur !== want) return 'other'; } catch (x) {}
+    if (window.__novaProbing) return 'busy';
+    window.__novaProbing = true;
+    var wasPaused = e.paused, wasMuted = e.muted, levels = [], q = [];
+    try { levels = mp.getAvailableQualityLevels() || []; } catch (x) {}
+    ['hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'].forEach(function (k) { if (levels.indexOf(k) >= 0) q.push(k); });
+    if (q.length > 6) q = q.filter(function (k, i) { return i % 2 === 0 || k === 'hd1080' || k === 'hd720'; }).slice(0, 6);
+    if (wasPaused) { try { e.muted = true; var pr = e.play(); if (pr && pr.catch) pr.catch(function () {}); } catch (x) {} }
+    var i = 0;
+    function done() {
+      try { mp.setPlaybackQualityRange('auto', 'auto'); } catch (x) {}
+      try { if (wasPaused) { (window.__novaOrigPause || e.pause).call(e); } e.muted = wasMuted; } catch (x) {}
+      window.__novaProbing = false;
+    }
+    function step() {
+      if (i >= q.length) return done();
+      try { mp.setPlaybackQualityRange(q[i], q[i]); } catch (x) {}
+      i++;
+      setTimeout(step, 1300);
+    }
+    setTimeout(step, 600);
+    return 'ok';
+  };
+
   // النافذة المنبثقة: يملأ الفيديو الشاشة ويُخفى كل ما عداه. التراجع (false) آمن دائماً ويُستدعى أيضاً عند كل عودة للواجهة
   window.__novaPip = function (on) {
     var id = '__nova_pip_css', old = document.getElementById(id), e = v();
@@ -555,5 +582,36 @@ try {
       p.style.setProperty('overflow', 'visible', 'important');
     }
   };
+})();
+} catch (e) {}
+
+try {
+(function () {
+  'use strict';
+  if (window.__novaH264 || window.top !== window) return;
+  window.__novaH264 = 1;
+  var bad = /vp0?9|av01/i;
+  try {
+    var ms = window.MediaSource;
+    if (ms && ms.isTypeSupported) {
+      var o = ms.isTypeSupported.bind(ms);
+      ms.isTypeSupported = function (t) { return bad.test(String(t)) ? false : o(t); };
+    }
+  } catch (e) {}
+  try {
+    var mc = navigator.mediaCapabilities;
+    if (mc && mc.decodingInfo) {
+      var d = mc.decodingInfo.bind(mc);
+      mc.decodingInfo = function (c) {
+        var t = c && c.video && c.video.contentType || '';
+        if (bad.test(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
+        return d(c);
+      };
+    }
+  } catch (e) {}
+  try {
+    var cp = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (t) { return bad.test(String(t)) ? '' : cp.call(this, t); };
+  } catch (e) {}
 })();
 } catch (e) {}
