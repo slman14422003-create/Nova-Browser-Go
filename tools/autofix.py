@@ -47,6 +47,33 @@ def fix_duplicates(log):
     return True
 
 
+KT_ERR = re.compile(r"^e: file://(\S+?\.kt):(\d+):(\d+) Unresolved reference '(\w+)'", re.M)
+QUALIFIED = re.compile(r"(?:[a-z_]\w*\.){2,}([A-Z]\w*)")
+
+
+def fix_kotlin_qualified(log):
+    """Unresolved package segment inside a fully qualified name: use the simple class name instead."""
+    changed = False
+    for path, line, col, name in KT_ERR.findall(log):
+        m = re.search(r"(/app/src/.*)$", path)
+        f = Path(m.group(1).lstrip("/")) if m else Path(path)
+        if not f.exists():
+            continue
+        lines = f.read_text(encoding="utf-8").split("\n")
+        i = int(line) - 1
+        if i >= len(lines):
+            continue
+        c = int(col) - 1
+        for q in QUALIFIED.finditer(lines[i]):
+            if q.start() <= c <= q.end() and name in q.group(0).split("."):
+                lines[i] = lines[i][: q.start()] + q.group(1) + lines[i][q.end():]
+                changed = True
+                break
+        if changed:
+            f.write_text("\n".join(lines), encoding="utf-8")
+    return changed
+
+
 def main():
     log = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
     fixed = []
@@ -54,6 +81,8 @@ def main():
         fixed.append("manifest-merge")
     if fix_duplicates(log):
         fixed.append("duplicate-classes")
+    if fix_kotlin_qualified(log):
+        fixed.append("kotlin-qualified-name")
     print(",".join(fixed))
 
 
