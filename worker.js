@@ -16,14 +16,9 @@ const PIPED = [
 
 const CLIENTS = [
   {
-    name: "ANDROID_VR", ver: "1.60.19", id: "28",
-    ua: "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+    name: "ANDROID_VR", ver: "1.65.10", id: "28",
+    ua: "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
     ctx: { deviceMake: "Oculus", deviceModel: "Quest 3", osName: "Android", osVersion: "12L", androidSdkVersion: 32 },
-  },
-  {
-    name: "IOS", ver: "20.10.4", id: "5",
-    ua: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
-    ctx: { deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.3.2.22D82" },
   },
   {
     name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER", ver: "2.0", id: "85",

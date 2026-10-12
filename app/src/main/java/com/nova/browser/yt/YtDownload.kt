@@ -43,7 +43,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 
 /** عميل «ANDROID_VR» (InnerTube): يعيد روابط تنزيل مباشرة بلا تشفير توقيع ولا PO token، فلا حاجة لمكتبة فك تشفير ولا لخوادم وسيطة. */
-const val YT_VR_VER = "1.60.19"
+const val YT_VR_VER = "1.65.10"
 const val YT_VR_UA = "com.google.android.apps.youtube.vr.oculus/$YT_VR_VER (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
 const val YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
@@ -208,9 +208,6 @@ object YtFetch {
         Cl("ANDROID_VR", YT_VR_VER, "28", YT_VR_UA) {
             put("deviceMake", "Oculus"); put("deviceModel", "Quest 3"); put("osName", "Android"); put("osVersion", "12L"); put("androidSdkVersion", 32)
         },
-        Cl("IOS", "20.10.4", "5", "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)") {
-            put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2"); put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
-        },
         Cl("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "85", "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15") {
             put("clientScreen", "EMBED")
         },
@@ -264,10 +261,12 @@ object YtFetch {
         val id = canonical(url).substringAfter("v=")
         val errors = ArrayList<String>()
         val tried = HashSet<String>()
+        val deadline = System.currentTimeMillis() + 30_000L
+        fun timeLeft() = System.currentTimeMillis() < deadline
         fun attempt(base: String): YtInfo? {
-            if (!tried.add(base)) return null
+            if (!timeLeft() || !tried.add(base)) return null
             return try {
-                parse(httpGet("$base/streams/$id")).also { lastGood = base }
+                parse(httpGet("$base/streams/$id", 6)).also { lastGood = base }
             } catch (e: Exception) {
                 val m = e.message ?: e.javaClass.simpleName
                 errors.add(base.removePrefix("https://") + ": " + m)
@@ -294,7 +293,7 @@ object YtFetch {
         lastGood?.let { g -> attempt(g)?.let { return it } }
         for (base in INSTANCES) attempt(base)?.let { return it }
         // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)
-        for (base in liveInstances().filter { it !in tried }.take(8)) attempt(base)?.let { return it }
+        if (timeLeft()) for (base in liveInstances().filter { it !in tried }.take(4)) attempt(base)?.let { return it }
         if (directBlocked()) runDirect()?.let { return it }   // last resort: proxy paths all failed
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
