@@ -29,4 +29,7 @@
     <string name="upd_general">Improvements and fixes</string>
     <string name="upd_wait">Please wait</string>
     <string name="upd_stalled">The connection stalled. Try again.</string>
+    <string name="conv_progress">Converting to MP3</string>
+    <string name="conv_m4a">MP3 encoder is unavailable. Saved as M4A instead.</string>
+    <string name="conv_done">Saved to your downloads</string>
 </resources>

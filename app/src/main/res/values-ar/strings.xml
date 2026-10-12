@@ -29,4 +29,7 @@
     <string name="upd_general">تحسينات وإصلاحات</string>
     <string name="upd_wait">يرجى الانتظار</string>
     <string name="upd_stalled">توقف الاتصال. أعد المحاولة.</string>
+    <string name="conv_progress">جارٍ التحويل إلى MP3</string>
+    <string name="conv_m4a">محوّل MP3 غير متوفر. تم الحفظ بصيغة M4A.</string>
+    <string name="conv_done">تم الحفظ في التنزيلات</string>
 </resources>

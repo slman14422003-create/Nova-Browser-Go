@@ -60,29 +60,80 @@ object Mp3Lame {
 object AudioConvert {
     fun toMp3(app: Context, t: DlTask, kbps: Int = 192) {
         val src = t.uri ?: return
-        if (!Mp3Lame.available) { Handler(Looper.getMainLooper()).post { toast(app, Downloader.str(R.string.conv_unavailable)) }; return }
         val base = t.name.substringBeforeLast('.').ifBlank { "audio" }
-        Downloader.work.incrementAndGet()
+        val lame = Mp3Lame.available
+        val ext = if (lame) "mp3" else "m4a"
+        val mime = if (lame) "audio/mpeg" else "audio/mp4"
+        val ph = Downloader.addConverting("$base.$ext")
+        Downloader.beginWork()
         Thread({
             val ui = Handler(Looper.getMainLooper())
             var out: Uri? = null
             try {
-                ui.post { toast(app, Downloader.str(R.string.conv_start)) }
-                val dst = Storage.create(app, "$base.mp3", "audio/mpeg")
+                if (!lame) ui.post { toast(app, Downloader.str(R.string.conv_m4a)) }
+                val dst = Storage.create(app, "$base.$ext", mime)
                 out = dst
-                val os = app.contentResolver.openOutputStream(dst) ?: throw IOException("no output")
-                os.use { encode(app, src, BufferedOutputStream(it, 64 * 1024), kbps) }
-                Storage.finish(app, dst, "audio/mpeg")
+                val prog: (Float) -> Unit = { p -> ph.convPct = p }
+                if (lame) {
+                    val os = app.contentResolver.openOutputStream(dst) ?: throw IOException("no output")
+                    os.use { encode(app, src, BufferedOutputStream(it, 64 * 1024), kbps, prog) }
+                } else {
+                    remux(app, src, dst, prog)
+                }
+                Storage.finish(app, dst, mime)
                 val size = app.contentResolver.openFileDescriptor(dst, "r")?.use { it.statSize } ?: -1L
-                Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.mp3", dst, "audio/mpeg", size)
+                Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.$ext", dst, mime, size)
+                ui.post { toast(app, Downloader.str(R.string.conv_done)) }
             } catch (e: Throwable) {
                 out?.let { runCatching { Storage.delete(app, it) } }
-                YtLog.add("mp3 convert failed: $e")
+                YtLog.add("convert failed: $e")
                 ui.post { toast(app, Downloader.str(R.string.conv_fail)) }
             } finally {
+                Downloader.endConverting(ph)
                 Downloader.work.decrementAndGet()
             }
         }, "nova-mp3").start()
+    }
+
+    private fun remux(app: Context, src: Uri, out: Uri, onProgress: (Float) -> Unit) {
+        val r = app.contentResolver
+        r.openFileDescriptor(src, "r")!!.use { sfd ->
+            r.openFileDescriptor(out, "rw")!!.use { ofd ->
+                val ex = MediaExtractor()
+                var mx: android.media.MediaMuxer? = null
+                var started = false
+                try {
+                    ex.setDataSource(sfd.fileDescriptor)
+                    val ti = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+                    val f = ex.getTrackFormat(ti)
+                    ex.selectTrack(ti)
+                    val dur = if (f.containsKey(MediaFormat.KEY_DURATION)) f.getLong(MediaFormat.KEY_DURATION) else 0L
+                    val m = if (android.os.Build.VERSION.SDK_INT >= 26) android.media.MediaMuxer(ofd.fileDescriptor, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                    else android.media.MediaMuxer(Storage.pathOf(out) ?: throw IOException("no path"), android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                    mx = m
+                    val idx = m.addTrack(f)
+                    m.start(); started = true
+                    val buf = java.nio.ByteBuffer.allocate(1024 * 1024)
+                    val bi = MediaCodec.BufferInfo()
+                    var lastUi = 0L
+                    while (true) {
+                        buf.clear()
+                        val n = ex.readSampleData(buf, 0)
+                        if (n < 0) break
+                        bi.set(0, n, ex.sampleTime, MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                        m.writeSampleData(idx, buf, bi)
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (dur > 0 && now - lastUi > 200) { lastUi = now; onProgress((ex.sampleTime.toFloat() / dur).coerceIn(0f, 1f)) }
+                        ex.advance()
+                    }
+                    onProgress(1f)
+                } finally {
+                    if (started) runCatching { mx?.stop() }
+                    runCatching { mx?.release() }
+                    runCatching { ex.release() }
+                }
+            }
+        }
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -109,7 +160,7 @@ object AudioConvert {
         }
     }
 
-    private fun encode(app: Context, src: Uri, os: OutputStream, kbps: Int) {
+    private fun encode(app: Context, src: Uri, os: OutputStream, kbps: Int, onProgress: (Float) -> Unit = {}) {
         val ex = MediaExtractor()
         try {
             app.contentResolver.openFileDescriptor(src, "r")!!.use { pfd ->
@@ -117,6 +168,8 @@ object AudioConvert {
                 val ti = (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
                 val fmt = ex.getTrackFormat(ti)
                 ex.selectTrack(ti)
+                val durUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION) else 0L
+                var lastUi = 0L
                 val c = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
                 var enc: Mp3Lame.Enc? = null
                 try {
@@ -138,8 +191,11 @@ object AudioConvert {
                                     c.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                                     inDone = true
                                 } else {
-                                    c.queueInputBuffer(ii, 0, n, ex.sampleTime, 0)
+                                    val st = ex.sampleTime
+                                    c.queueInputBuffer(ii, 0, n, st, 0)
                                     ex.advance()
+                                    val now = android.os.SystemClock.elapsedRealtime()
+                                    if (durUs > 0 && now - lastUi > 200) { lastUi = now; onProgress((st.toFloat() / durUs).coerceIn(0f, 1f)) }
                                 }
                             }
                         }
@@ -180,6 +236,7 @@ object AudioConvert {
                     val n = e.flush(mp3)
                     if (n > 0) os.write(mp3, 0, n)
                     os.flush()
+                    onProgress(1f)
                 } finally {
                     runCatching { c.stop() }
                     runCatching { c.release() }

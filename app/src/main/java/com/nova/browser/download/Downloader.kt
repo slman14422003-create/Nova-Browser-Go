@@ -64,6 +64,8 @@ class DlTask(
     @Volatile var refresher: (() -> String?)? = null
     @Volatile var connLimit = 0
     val refreshes = AtomicInteger(0)
+    var converting by mutableStateOf(false)
+    var convPct by mutableFloatStateOf(0f)
     @Volatile var onDone: ((DlTask) -> Unit)? = null  // يُستدعى عند الاكتمال (لا يُحفظ بعد إعادة التشغيل)
 }
 
@@ -71,7 +73,8 @@ object Downloader {
     var offer by mutableStateOf<DlTask?>(null)
 
     private fun offerConvert(t: DlTask) {
-        if (t.mime.startsWith("video/") && Mp3Lame.available) main.post { offer = t }
+        val ext = t.name.substringAfterLast('.', "").lowercase()
+        if (t.mime.startsWith("video/") || ext in setOf("mp4", "mkv", "webm", "mov", "m4v", "3gp")) main.post { offer = t }
     }
 
     const val PREPARING = 0
@@ -79,6 +82,7 @@ object Downloader {
     const val PAUSED = 2
     const val DONE = 3
     const val FAILED = 4
+    const val CONVERTING = 5
     private const val MIN_SPLIT = 256 * 1024L
 
     lateinit var app: Context
@@ -128,6 +132,17 @@ object Downloader {
         Executors.newSingleThreadScheduledExecutor()
             .scheduleWithFixedDelay({ runCatching { tick() } }, period, period, TimeUnit.MILLISECONDS)
     }
+
+    fun beginWork() { work.incrementAndGet(); startService() }
+
+    fun addConverting(name: String): DlTask {
+        val t = DlTask(UUID.randomUUID().toString(), "", "", "", "")
+        t.name = name; t.mime = "audio/mpeg"; t.status = CONVERTING; t.converting = true; t.resumable = false
+        main.post { tasks.add(0, t) }
+        return t
+    }
+
+    fun endConverting(t: DlTask) { main.post { tasks.remove(t) } }
 
     private fun startService() {
         ensureEngine()
@@ -506,7 +521,7 @@ object Downloader {
     @Synchronized
     fun save() {
         val arr = JSONArray()
-        for (t in tasks.toList()) {
+        for (t in tasks.toList().filter { !it.converting }) {
             arr.put(JSONObject().apply {
                 put("id", t.id); put("url", t.url); put("orig", t.origUrl); put("ua", t.ua); put("ref", t.referer)
                 put("name", t.name); put("mime", t.mime); put("uri", t.uri?.toString() ?: "")

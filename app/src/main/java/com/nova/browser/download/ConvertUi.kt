@@ -15,7 +15,11 @@ fun ConvertOfferDialog() {
         icon = Icons.Default.Check,
         onDismiss = { Downloader.offer = null },
         confirmText = stringResource(R.string.conv_yes),
-        onConfirm = { Downloader.offer = null; AudioConvert.toMp3(ctx.applicationContext, t) },
+        onConfirm = {
+            Downloader.offer = null
+            AudioConvert.toMp3(ctx.applicationContext, t)
+            (ctx as? MainActivity)?.let { openPanel(it, "downloads") }
+        },
         dismissText = stringResource(R.string.conv_no)
     ) { DialogText(t.name + "\n" + stringResource(R.string.conv_offer_text)) }
 }

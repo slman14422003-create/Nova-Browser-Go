@@ -61,6 +61,7 @@ private fun statusLine(t: DlTask): String {
             val eta = if (t.speed > 0 && t.total > 0) " • ${fmtEta((t.total - t.downloaded) / t.speed)}" else ""
             ("" + (fmtSize(t.downloaded)) + " / " + tot + pct + " • " + (fmtSpeed(t.speed)) + eta + " • " + (t.conns) + L(" اتصال"))
         }
+        Downloader.CONVERTING -> Downloader.str(R.string.conv_progress) + " • " + (t.convPct * 100).toInt() + "%"
         Downloader.PAUSED -> (L("متوقف • ") + (fmtSize(t.downloaded)) + " / " + tot)
         Downloader.FAILED -> (L("فشل: ") + (t.error))
         else -> ("" + tot + L(" • اكتمل"))
@@ -139,7 +140,7 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                         style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
-                Box {
+                if (!t.converting) Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, L("المزيد")) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(20.dp)) {
                         DropdownMenuItem(text = { Text(L("نسخ الرابط")) }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { menu = false; copyText(ctx, t.origUrl) })
@@ -150,11 +151,22 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            if (!done) { Spacer(Modifier.height(12.dp)); SegmentBar(t) }
+            if (t.converting) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    NovaSpinner(size = 20.dp, color = cs.onSurfaceVariant)
+                    Spacer(Modifier.width(10.dp))
+                    LinearProgressIndicator(
+                        progress = { t.convPct.coerceIn(0f, 1f) }, modifier = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        color = cs.tertiary, trackColor = cs.surfaceContainerHighest
+                    )
+                }
+            } else if (!done) { Spacer(Modifier.height(12.dp)); SegmentBar(t) }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
                 when {
+                    t.converting -> {}
                     done -> {
-                        if (kind == 1 && Mp3Lame.available) TextButton(onClick = { AudioConvert.toMp3(ctx.applicationContext, t) }) { Text(androidx.compose.ui.res.stringResource(R.string.conv_action)) }
+                        if (kind == 1) TextButton(onClick = { AudioConvert.toMp3(ctx.applicationContext, t) }) { Text(androidx.compose.ui.res.stringResource(R.string.conv_action)) }
                         TextButton(onClick = { shareFile(ctx, t) }) { Text(L("مشاركة")) }
                         FilledTonalButton(onClick = { openFile(ctx, t) }) { Text(L("فتح")) }
                     }
