@@ -21,3 +21,7 @@
 ## Task 2: HTTP 403 mid-download (YouTube)
 - googlevideo links are IP/session bound and throttle parallel ranges. YouTube tasks now use 1 connection (DlTask.connLimit) and on HTTP 403/410 fetch a fresh link via DlTask.refresher (max 4 times) and continue.
 - Not verified on device. If 403 persists, check VPN/IPv6 mismatch between the extractor client and the downloader.
+
+## Task 3: 403 persists, stuck at 0 B
+- Likely cause: link came from a different InnerTube client (IOS/TV/web) than the UA used for the download. Now the UA is derived from the link's `c` param (ytUaFor) at start and after each refresh.
+- 403 refresh events are logged via YtLog (c= old -> new). Check the log if it still fails; YouTube may require PO tokens for these clients.

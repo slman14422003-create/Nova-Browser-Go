@@ -38,7 +38,7 @@ class Seg(val start: Long, end0: Long) {
 }
 
 class DlTask(
-    val id: String, var url: String, val origUrl: String, val ua: String, val referer: String,
+    val id: String, var url: String, val origUrl: String, @Volatile var ua: String, val referer: String,
     val createdAt: Long = System.currentTimeMillis()
 ) {
     var name by mutableStateOf("")
@@ -386,6 +386,8 @@ object Downloader {
             if (t.refreshes.incrementAndGet() > 4) return false
             val fresh = runCatching { r() }.getOrNull() ?: return false
             t.url = fresh
+            if (t.ua.isNotBlank()) t.ua = ytUaFor(fresh)
+            YtLog.add("refresh after 403: c=" + runCatching { Uri.parse(used).getQueryParameter("c") }.getOrNull() + " -> " + runCatching { Uri.parse(fresh).getQueryParameter("c") }.getOrNull())
             return true
         }
     }

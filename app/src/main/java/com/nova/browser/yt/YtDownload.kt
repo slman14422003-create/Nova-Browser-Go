@@ -47,6 +47,16 @@ const val YT_VR_VER = "1.60.19"
 const val YT_VR_UA = "com.google.android.apps.youtube.vr.oculus/$YT_VR_VER (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
 const val YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
+const val YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+const val YT_TV_UA = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15"
+
+fun ytUaFor(url: String): String = when (runCatching { Uri.parse(url).getQueryParameter("c") }.getOrNull()) {
+    "ANDROID_VR" -> YT_VR_UA
+    "IOS" -> YT_IOS_UA
+    "TVHTML5_SIMPLY_EMBEDDED_PLAYER" -> YT_TV_UA
+    else -> YT_UA
+}
+
 /** هل الرابط صفحة فيديو يوتيوب (مشاهدة/شورتس/بث)؟ */
 fun isYtVideo(u: String): Boolean {
     val p = runCatching { Uri.parse(u) }.getOrNull() ?: return false
@@ -341,7 +351,7 @@ object YtDownload {
         val f = o.fmt
         if (f != null) {
             // تنزيل المصدر ثم التحويل إلى الصيغة المطلوبة (يُستدعى الـ callback على خيط خلفي)
-            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [source].${o.ext}", o.mime) { t ->
+            Downloader.startNamed(ctx, o.url, ytUaFor(o.url), ref, "$base [source].${o.ext}", o.mime) { t ->
                 AudioConvert.run(ctx.applicationContext, base, info.title, info.author, t, f)
             }
             return
@@ -352,7 +362,7 @@ object YtDownload {
                 val list = if (o.mime.startsWith("audio")) fi?.audios else fi?.videos?.filter { it.audioUrl == null }
                 (list?.firstOrNull { it.label == o.label } ?: list?.firstOrNull { it.ext == o.ext })?.url
             }
-            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base.${o.ext}", o.mime).also { it.refresher = single; it.connLimit = 1 }
+            Downloader.startNamed(ctx, o.url, ytUaFor(o.url), ref, "$base.${o.ext}", o.mime).also { it.refresher = single; it.connLimit = 1 }
             return
         }
         fun fresh(): YtInfo? = pageUrl?.let { runCatching { YtFetch.info(it) }.getOrNull() }
@@ -372,8 +382,8 @@ object YtDownload {
                 }.start()
             }
         }
-        holder[0] = Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [video].mp4", "video/mp4", finish).also { it.refresher = vRef; it.connLimit = 1 }
-        holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_VR_UA, ref, "$base [audio].m4a", "audio/mp4", finish).also { it.refresher = aRef; it.connLimit = 1 }
+        holder[0] = Downloader.startNamed(ctx, o.url, ytUaFor(o.url), ref, "$base [video].mp4", "video/mp4", finish).also { it.refresher = vRef; it.connLimit = 1 }
+        holder[1] = Downloader.startNamed(ctx, o.audioUrl, ytUaFor(o.audioUrl), ref, "$base [audio].m4a", "audio/mp4", finish).also { it.refresher = aRef; it.connLimit = 1 }
     }
 
     private fun runMux(app: Context, base: String, v: DlTask, a: DlTask) {
