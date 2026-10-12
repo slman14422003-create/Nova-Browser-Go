@@ -87,6 +87,23 @@ object Downloader {
 
     @Volatile private var engineOn = false
 
+    private fun str(id: Int): String = runCatching {
+        val cfg = android.content.res.Configuration(app.resources.configuration)
+        cfg.setLocale(java.util.Locale.forLanguageTag(I18n.code()))
+        app.createConfigurationContext(cfg).getString(id)
+    }.getOrElse { app.getString(id) }
+
+    private fun describe(e: Throwable): String {
+        var c: Throwable? = e
+        var depth = 0
+        while (c != null && depth++ < 6) {
+            if (c is javax.net.ssl.SSLException || c is java.security.cert.CertificateException || c is java.security.cert.CertPathValidatorException)
+                return str(R.string.dl_err_tls) + "\n" + str(R.string.dl_err_tls_hint)
+            c = c.cause
+        }
+        return e.message ?: L("خطأ")
+    }
+
     /** مهام معالجة بعد التنزيل (دمج/تحويل): تُبقي خدمة الإشعار حيّة كي لا يختفي الإشعار وتُقتل العملية أثناء الدمج. */
     val work = AtomicInteger(0)
 
@@ -97,8 +114,9 @@ object Downloader {
         engineOn = true
         System.setProperty("http.maxConnections", "32")
         Notif.ensureChannels(app)
+        val period = if (LowEnd.on) 800L else 400L
         Executors.newSingleThreadScheduledExecutor()
-            .scheduleWithFixedDelay({ runCatching { tick() } }, 400, 400, TimeUnit.MILLISECONDS)
+            .scheduleWithFixedDelay({ runCatching { tick() } }, period, period, TimeUnit.MILLISECONDS)
     }
 
     private fun startService() {
@@ -161,7 +179,7 @@ object Downloader {
                 if (t.uri == null) { prepare(t, null); return@execute }
                 if (!t.resumable) buildSegs(t)
                 run(t)
-            } catch (e: Exception) { fail(t, e.message ?: L("خطأ")) }
+            } catch (e: Exception) { fail(t, describe(e)) }
         }
     }
 
@@ -191,7 +209,7 @@ object Downloader {
             save()
             if (t.stopReason != 0) { finish(t); return }
             run(t)
-        } catch (e: Exception) { fail(t, e.message ?: L("خطأ")) }
+        } catch (e: Exception) { fail(t, describe(e)) }
     }
 
     private val sinkFd = HashMap<String, ParcelFileDescriptor>()
@@ -292,10 +310,10 @@ object Downloader {
             val ch = t.channel!!
             while (t.stopReason == 0) {
                 val seg = claim(t) ?: break
-                try { fetch(t, seg, ch) } catch (e: Exception) { t.error = e.message ?: L("خطأ"); seg.busy = false; break }
+                try { fetch(t, seg, ch) } catch (e: Exception) { t.error = describe(e); seg.busy = false; break }
                 seg.busy = false
             }
-        } catch (e: Exception) { t.error = e.message ?: L("خطأ") }
+        } catch (e: Exception) { t.error = describe(e) }
         finally { if (t.active.decrementAndGet() == 0) finish(t) }
     }
 
@@ -318,7 +336,7 @@ object Downloader {
 
     private fun fetch(t: DlTask, seg: Seg, ch: FileChannel) {
         var fails = 0
-        val buf = ByteArray(128 * 1024)
+        val buf = ByteArray(if (LowEnd.on) 64 * 1024 else 128 * 1024)
         while (seg.remaining > 0 && t.stopReason == 0) {
             val before = seg.pos
             var c: HttpURLConnection? = null

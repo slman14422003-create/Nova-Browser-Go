@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dl_err_tls">Secure connection failed. Check that the device date and time are correct, turn off any VPN or filtering DNS, then try again.</string>
+    <string name="dl_err_tls_hint">If it keeps failing, switch to another network.</string>
+</resources>

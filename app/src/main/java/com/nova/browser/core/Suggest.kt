@@ -44,7 +44,7 @@ object NetKit {
     fun init(c: Context) { app = c.applicationContext }
 
     val client: OkHttpClient by lazy {
-        val b = OkHttpClient.Builder()
+        val b = Tls.apply(OkHttpClient.Builder())
             .connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).callTimeout(7, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
         app?.let { b.cache(Cache(File(it.cacheDir, "nova-http"), 4L * 1024 * 1024)) }

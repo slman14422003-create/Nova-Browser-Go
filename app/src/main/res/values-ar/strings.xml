@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dl_err_tls">فشل الاتصال الآمن. تأكد من صحة تاريخ ووقت الجهاز، وأوقف أي VPN أو DNS مُرشِّح، ثم أعد المحاولة.</string>
+    <string name="dl_err_tls_hint">إن استمر الفشل جرّب شبكة أخرى.</string>
+</resources>

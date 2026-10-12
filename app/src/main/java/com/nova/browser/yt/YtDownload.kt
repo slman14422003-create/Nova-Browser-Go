@@ -99,7 +99,7 @@ object YtFetch {
      * فلا يحتاج الطلب نفسه إلى DNS) ونتصل بالعنوان الناتج مع إبقاء اسم النطاق للشهادة (TLS/SNI).
      */
     private val client: okhttp3.OkHttpClient by lazy {
-        okhttp3.OkHttpClient.Builder()
+        Tls.apply(okhttp3.OkHttpClient.Builder())
             .dns(DohFallbackDns)
             .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -389,6 +389,11 @@ object Mux {
     private fun track(ex: MediaExtractor, prefix: String): Int =
         (0 until ex.trackCount).first { ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith(prefix) == true }
 
+    private fun sampleCap(f: android.media.MediaFormat): Int {
+        val v = if (f.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE)) f.getInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE) else 0
+        return if (v > 0) v.coerceIn(256 * 1024, 8 * 1024 * 1024) else 2 * 1024 * 1024
+    }
+
     fun mux(ctx: Context, video: Uri, audio: Uri, out: Uri) {
         val r = ctx.contentResolver
         r.openFileDescriptor(video, "r")!!.use { vfd ->
@@ -407,7 +412,8 @@ object Mux {
                         mx = m
                         val vi = m.addTrack(ve.getTrackFormat(vt)); val ai = m.addTrack(ae.getTrackFormat(at))
                         m.start(); started = true
-                        val buf = ByteBuffer.allocate(4 * 1024 * 1024)
+                        val need = maxOf(sampleCap(ve.getTrackFormat(vt)), sampleCap(ae.getTrackFormat(at)))
+                        val buf = ByteBuffer.allocate(need)
                         val bi = MediaCodec.BufferInfo()
                         while (true) {
                             val vtm = ve.sampleTime; val atm = ae.sampleTime
