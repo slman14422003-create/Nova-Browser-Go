@@ -54,7 +54,8 @@ fun ytUaFor(url: String): String = when (runCatching { Uri.parse(url).getQueryPa
     "ANDROID_VR" -> YT_VR_UA
     "IOS" -> YT_IOS_UA
     "TVHTML5_SIMPLY_EMBEDDED_PLAYER" -> YT_TV_UA
-    else -> YT_UA
+    "WEB", "MWEB", "WEB_REMIX", "WEB_EMBEDDED_PLAYER" -> YtSniff.ua.ifBlank { YT_UA }
+    else -> YtSniff.ua.ifBlank { YT_UA }
 }
 
 /** هل الرابط صفحة فيديو يوتيوب (مشاهدة/شورتس/بث)؟ */
@@ -275,6 +276,13 @@ object YtFetch {
                 null
             }
         }
+        run {
+            val meta = runCatching {
+                val o = JSONObject(httpGet("https://www.youtube.com/oembed?format=json&url=" + java.net.URLEncoder.encode(canonical(url), "UTF-8"), 5))
+                o.optString("title") to o.optString("author_name")
+            }.getOrNull()
+            YtSniff.json(meta?.first ?: "YouTube video", meta?.second ?: "")?.let { j -> runCatching { parse(j) }.getOrNull()?.let { r -> if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r } }
+        }
         var ytErr = ""
         fun runDirect(): YtInfo? {
             for (c in CLIENTS) {
@@ -295,6 +303,7 @@ object YtFetch {
         // كلها فشلت: نجرّب قائمة الخوادم الحيّة (حتى 8 خوادم جديدة)
         if (timeLeft()) for (base in liveInstances().filter { it !in tried }.take(4)) attempt(base)?.let { return it }
         if (directBlocked()) runDirect()?.let { return it }   // last resort: proxy paths all failed
+        errors.add("Tip: let the video play for a few seconds in the page, then press Try again")
         val dnsOnly = errors.isNotEmpty() && errors.all { it.contains("resolve host", true) || it.contains("hostname", true) }
         throw IOException(
             (if (dnsOnly) L("تعذّر الوصول إلى خوادم الاستخراج (فشل DNS) — جرّب شبكة أخرى أو VPN.") else L("تعذّر الاتصال بخوادم الاستخراج حالياً.")) +

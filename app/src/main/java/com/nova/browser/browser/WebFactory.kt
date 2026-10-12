@@ -104,8 +104,10 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
             PasswordBridge.onPageDone(v)
             Library.visit(u, v.title)   // سجل التصفح
         }
-        override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? =
-            Shield.intercept(tab.shieldHost, r.url, r.isForMainFrame) ?: Perf.intercept(r.url, r.isForMainFrame)
+        override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
+            YtSniff.onRequest(r)
+            return Shield.intercept(tab.shieldHost, r.url, r.isForMainFrame) ?: Perf.intercept(r.url, r.isForMainFrame)
+        }
         override fun onRenderProcessGone(v: WebView, d: RenderProcessGoneDetail): Boolean {
             // منع انهيار التطبيق: نُسقط الـ WebView ونعيد إنشاءه بنفس العنوان
             (v.parent as? ViewGroup)?.removeView(v)
