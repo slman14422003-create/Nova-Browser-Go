@@ -104,7 +104,7 @@ object Downloader {
                 return str(R.string.dl_err_tls) + "\n" + str(R.string.dl_err_tls_hint)
             c = c.cause
         }
-        return e.message ?: L("خطأ")
+        return e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
     }
 
     /** مهام معالجة بعد التنزيل (دمج/تحويل): تُبقي خدمة الإشعار حيّة كي لا يختفي الإشعار وتُقتل العملية أثناء الدمج. */
@@ -217,21 +217,21 @@ object Downloader {
 
     private val sinkFd = HashMap<String, ParcelFileDescriptor>()
 
-    private fun open(t: DlTask, url: String, range: String?): HttpURLConnection {
+    private fun open(t: DlTask, url: String, range: String?): Conn {
         if (!(url.startsWith("https://") || url.startsWith("http://"))) throw IOException("unsupported scheme")
-        val c = URL(url).openConnection() as HttpURLConnection
-        c.instanceFollowRedirects = false
-        c.connectTimeout = 15000; c.readTimeout = 20000; c.useCaches = false
-        c.setRequestProperty("Accept-Encoding", "identity")
-        if (t.ua.isNotBlank()) c.setRequestProperty("User-Agent", t.ua)
-        if (t.referer.isNotBlank()) c.setRequestProperty("Referer", t.referer)
-        val ck = CookieManager.getInstance().getCookie(url)
-        if (!ck.isNullOrBlank()) c.setRequestProperty("Cookie", ck)
-        if (range != null) c.setRequestProperty("Range", range)
-        return c
+        val gv = isGoogleVideo(url)
+        val b = okhttp3.Request.Builder().url(url).header("Accept-Encoding", "identity")
+        if (t.ua.isNotBlank()) b.header("User-Agent", t.ua)
+        if (!gv) {
+            if (t.referer.isNotBlank()) b.header("Referer", t.referer)
+            val ck = CookieManager.getInstance().getCookie(url)
+            if (!ck.isNullOrBlank()) b.header("Cookie", ck)
+        }
+        if (range != null) b.header("Range", range)
+        return Conn(DlHttp.client.newCall(b.build()).execute())
     }
 
-    private fun connect(t: DlTask, start: String, range: String?): Pair<HttpURLConnection, String> {
+    private fun connect(t: DlTask, start: String, range: String?): Pair<Conn, String> {
         var u = start
         repeat(8) {
             val c = open(t, u, range)
@@ -343,7 +343,7 @@ object Downloader {
         val buf = ByteArray(if (LowEnd.on) 64 * 1024 else 128 * 1024)
         while (seg.remaining > 0 && t.stopReason == 0) {
             val before = seg.pos
-            var c: HttpURLConnection? = null
+            var c: Conn? = null
             var usedUrlOf = t.url
             try {
                 val range = if (t.resumable) "bytes=${seg.pos}-${seg.end}" else null
@@ -523,5 +523,38 @@ object Downloader {
                 tasks.add(t)
             }
         }
+    }
+}
+
+class Conn(private val resp: okhttp3.Response) {
+    val responseCode: Int get() = resp.code
+    val contentType: String? get() = resp.header("Content-Type")
+    fun getHeaderField(name: String): String? = resp.header(name)
+    val inputStream: java.io.InputStream get() = resp.body.byteStream()
+    fun disconnect() { runCatching { resp.close() } }
+}
+
+fun isGoogleVideo(url: String): Boolean {
+    val h = runCatching { Uri.parse(url).host }.getOrNull() ?: return false
+    return h.endsWith("googlevideo.com") || h.endsWith("youtube.com")
+}
+
+fun v4first(l: List<java.net.InetAddress>): List<java.net.InetAddress> {
+    val v4 = l.filter { it is java.net.Inet4Address }
+    return if (v4.isNotEmpty()) v4 else l
+}
+
+object V4Dns : okhttp3.Dns {
+    override fun lookup(hostname: String): List<java.net.InetAddress> = v4first(okhttp3.Dns.SYSTEM.lookup(hostname))
+}
+
+object DlHttp {
+    val client: okhttp3.OkHttpClient by lazy {
+        Tls.apply(okhttp3.OkHttpClient.Builder())
+            .dns(V4Dns)
+            .followRedirects(false).followSslRedirects(false)
+            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
     }
 }

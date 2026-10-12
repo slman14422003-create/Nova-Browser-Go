@@ -128,7 +128,7 @@ object YtFetch {
 
         override fun lookup(hostname: String): List<java.net.InetAddress> {
             try {
-                return okhttp3.Dns.SYSTEM.lookup(hostname)
+                return v4first(okhttp3.Dns.SYSTEM.lookup(hostname))
             } catch (e: java.net.UnknownHostException) {
                 val c = cache[hostname]
                 if (c != null && System.currentTimeMillis() - c.first < 10 * 60_000L) return c.second
@@ -333,9 +333,12 @@ object YtFetch {
         videos.sortByDescending { qnum(it.label) }
 
         val audios = ArrayList<YtOpt>()
-        if (aac != null) audios.add(YtOpt("M4A • ${aac.bitrateK} kbps", L("الملف الأصلي AAC بلا تحويل"), aac.url, "m4a", "audio/mp4"))
-        if (opus != null) audios.add(YtOpt("WebM Opus • ${opus.bitrateK} kbps", L("الملف الأصلي Opus بلا تحويل"), opus.url, "webm", "audio/webm"))
-        // صيغ محوَّلة بعد التنزيل (فارغة حالياً — انظر AudioConvert)
+        val seen = HashSet<String>()
+        audiosAll.sortedWith(compareBy<A>({ it.ext != "m4a" }, { -it.bitrateK })).forEach { a ->
+            if (!seen.add(a.ext + a.bitrateK)) return@forEach
+            val m4 = a.ext == "m4a"
+            audios.add(YtOpt((if (m4) "M4A AAC" else "WebM Opus") + " - ${a.bitrateK} kbps", if (m4) L("الملف الأصلي AAC بلا تحويل") else L("الملف الأصلي Opus بلا تحويل"), a.url, a.ext, if (m4) "audio/mp4" else "audio/webm"))
+        }
         (aac ?: opus)?.let { src -> AudioFormats.all.forEach { f -> audios.add(YtOpt(f.label, f.sub, src.url, src.ext, if (src.ext == "m4a") "audio/mp4" else "audio/webm", null, f)) } }
 
         return YtInfo(j.optString("title"), j.optString("uploader"), videos, audios, j.optLong("duration"))

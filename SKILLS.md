@@ -25,3 +25,9 @@
 ## Task 3: 403 persists, stuck at 0 B
 - Likely cause: link came from a different InnerTube client (IOS/TV/web) than the UA used for the download. Now the UA is derived from the link's `c` param (ytUaFor) at start and after each refresh.
 - 403 refresh events are logged via YtLog (c= old -> new). Check the log if it still fails; YouTube may require PO tokens for these clients.
+
+## Task 4: 403 again + more audio formats
+- Downloader now uses OkHttp (DlHttp) instead of HttpURLConnection; IPv4-first DNS (v4first) for both the extractor and the downloader so both hit googlevideo from the same IP (links are IP bound). No cookies/Referer sent to googlevideo.
+- Empty error text now shows the exception class name.
+- Audio list now shows every available stream (M4A AAC / WebM Opus at each bitrate).
+- MP3 still pending (needs an encoder library).
