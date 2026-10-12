@@ -390,6 +390,7 @@ object Downloader {
         synchronized(t.lock) {
             if (t.url != used) return true
             if (t.refreshes.incrementAndGet() > 4) return false
+            if (runCatching { Uri.parse(used).host }.getOrNull()?.endsWith("googlevideo.com") == true) com.nova.browser.yt.YtFetch.markDirectBlocked()
             val fresh = runCatching { r() }.getOrNull() ?: return false
             t.url = fresh
             if (t.ua.isNotBlank()) t.ua = ytUaFor(fresh)

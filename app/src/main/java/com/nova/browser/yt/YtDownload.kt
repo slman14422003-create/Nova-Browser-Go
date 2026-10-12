@@ -101,6 +101,10 @@ object YtFetch {
         "https://pipedapi.r4fo.com",
     )
     @Volatile private var lastGood: String? = null
+    @Volatile private var directBlockedAt = 0L
+    /** Called after a direct googlevideo link returned 403: skip InnerTube for a while and use the proxy/Piped path. */
+    fun markDirectBlocked() { directBlockedAt = System.currentTimeMillis() }
+    private fun directBlocked() = System.currentTimeMillis() - directBlockedAt < 15 * 60_000L
     @Volatile private var live: List<String>? = null
 
     /**
@@ -273,7 +277,7 @@ object YtFetch {
             }
         }
         var ytErr = ""
-        for (c in CLIENTS) {
+        if (!directBlocked()) for (c in CLIENTS) {
             try {
                 val r = parse(innertube(id, c))
                 if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
