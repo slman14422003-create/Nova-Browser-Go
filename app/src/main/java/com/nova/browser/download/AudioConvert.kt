@@ -58,6 +58,33 @@ object Mp3Lame {
 }
 
 object AudioConvert {
+    fun toMp3(app: Context, t: DlTask, kbps: Int = 192) {
+        val src = t.uri ?: return
+        if (!Mp3Lame.available) { Handler(Looper.getMainLooper()).post { toast(app, Downloader.str(R.string.conv_unavailable)) }; return }
+        val base = t.name.substringBeforeLast('.').ifBlank { "audio" }
+        Downloader.work.incrementAndGet()
+        Thread({
+            val ui = Handler(Looper.getMainLooper())
+            var out: Uri? = null
+            try {
+                ui.post { toast(app, Downloader.str(R.string.conv_start)) }
+                val dst = Storage.create(app, "$base.mp3", "audio/mpeg")
+                out = dst
+                val os = app.contentResolver.openOutputStream(dst) ?: throw IOException("no output")
+                os.use { encode(app, src, BufferedOutputStream(it, 64 * 1024), kbps) }
+                Storage.finish(app, dst, "audio/mpeg")
+                val size = app.contentResolver.openFileDescriptor(dst, "r")?.use { it.statSize } ?: -1L
+                Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.mp3", dst, "audio/mpeg", size)
+            } catch (e: Throwable) {
+                out?.let { runCatching { Storage.delete(app, it) } }
+                YtLog.add("mp3 convert failed: $e")
+                ui.post { toast(app, Downloader.str(R.string.conv_fail)) }
+            } finally {
+                Downloader.work.decrementAndGet()
+            }
+        }, "nova-mp3").start()
+    }
+
     @Suppress("UNUSED_PARAMETER")
     fun run(app: Context, base: String, title: String, artist: String, src: DlTask, fmt: AudioFmt) {
         val ui = Handler(Looper.getMainLooper())

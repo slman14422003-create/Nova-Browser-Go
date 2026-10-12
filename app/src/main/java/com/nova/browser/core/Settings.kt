@@ -362,13 +362,7 @@ fun SettingsScreen(onBack: () -> Unit, onClearData: () -> Unit, onClearCache: ()
             RowSpec(L("التحديث التلقائي"), L("فحص الإصدارات الجديدة من GitHub كل 12 ساعة"), Icons.Default.Refresh, { Prefs.pickAutoUpdate(!Prefs.autoUpdate) },
                 { Switch(checked = Prefs.autoUpdate, onCheckedChange = null) }),
             RowSpec(L("سجل الأعطال"), if (CrashLog.text().isBlank()) L("لا توجد أعطال مسجلة") else L("اضغط لعرض آخر عطل ونسخه"), Icons.Default.Warning, { dialog = "crash" }),
-            RowSpec(L("التحقق من تحديث الآن"), updateStatus(), Icons.Default.Info, {
-                when (Updater.phase) {
-                    UpdPhase.AVAILABLE -> Updater.showPrompt()
-                    UpdPhase.READY -> Updater.install(ctx)
-                    else -> Updater.check(ctx, true)
-                }
-            })
+            RowSpec(L("التحقق من تحديث الآن"), updateStatus(), Icons.Default.Info, { Updater.openPanel(ctx) })
         )),
     )
 

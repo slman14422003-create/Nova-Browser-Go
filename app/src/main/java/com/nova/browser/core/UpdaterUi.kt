@@ -11,6 +11,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -70,74 +73,115 @@ fun releaseHighlights(raw: String, max: Int = 8): List<String> {
     return out
 }
 
-/** نافذة «يوجد تحديث» بهوية التطبيق: شارة متدرّجة، شرائح الإصدار والحجم، نقاط ما الجديد، وشريط تقدّم متدرّج. */
 @Composable
 fun UpdateDialog() {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    val i = Updater.info ?: return
-    val busy = Updater.phase == UpdPhase.DOWNLOADING || Updater.phase == UpdPhase.INSTALLING
-    val notes = remember(i.notes) { releaseHighlights(i.notes) }
+    val phase = Updater.phase
+    val i = Updater.info
+    val notes = remember(i?.notes) { releaseHighlights(i?.notes ?: "") }
+    LaunchedEffect(Unit) {
+        while (true) { Updater.unstick(); delay(3000) }
+    }
+    val working = phase == UpdPhase.CHECKING || phase == UpdPhase.INSTALLING
+    val title = when (phase) {
+        UpdPhase.CHECKING -> stringResource(R.string.upd_checking)
+        UpdPhase.UP_TO_DATE -> stringResource(R.string.upd_latest)
+        UpdPhase.AVAILABLE -> stringResource(R.string.upd_available)
+        UpdPhase.DOWNLOADING -> stringResource(R.string.upd_downloading)
+        UpdPhase.READY -> stringResource(R.string.upd_ready)
+        UpdPhase.INSTALLING -> stringResource(R.string.upd_installing)
+        UpdPhase.ERROR -> stringResource(R.string.upd_failed)
+        UpdPhase.IDLE -> stringResource(R.string.upd_title)
+    }
     AlertDialog(
-        onDismissRequest = { if (!busy) Updater.dismissPrompt() },
+        onDismissRequest = { Updater.dismissPrompt() },
         shape = RoundedCornerShape(28.dp),
         containerColor = cs.surfaceContainerHigh,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Box(
-                    Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                    Modifier.size(52.dp).clip(RoundedCornerShape(18.dp))
                         .background(Brush.linearGradient(listOf(cs.tertiary, lerp(cs.tertiary, cs.primaryContainer, 0.45f)))),
                     contentAlignment = Alignment.Center
-                ) { UpdateGlyph(cs.onTertiary, Modifier.size(26.dp)) }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(L("تحديث جديد"), fontWeight = FontWeight.Bold)
+                ) {
+                    if (working || phase == UpdPhase.DOWNLOADING) NovaSpinner(size = 28.dp, color = cs.onTertiary)
+                    else UpdateGlyph(cs.onTertiary, Modifier.size(26.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Chip("v" + i.version.removePrefix("v"), strong = true)
-                        if (i.size > 0) Chip(fmtSize(i.size), strong = false)
+                        Chip(stringResource(R.string.upd_current) + " v" + BuildConfig.VERSION_NAME, strong = false)
+                        if (i != null) Chip("v" + i.version.removePrefix("v"), strong = true)
+                        if (i != null && i.size > 0) Chip(fmtSize(i.size), strong = false)
                     }
                 }
             }
         },
         text = {
-            Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(L("ما الجديد"), style = MaterialTheme.typography.labelLarge, color = cs.tertiary)
-                (notes.ifEmpty { listOf(L("تحسينات وإصلاحات عامة")) }).forEach { n ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.padding(top = 7.dp).size(6.dp).clip(CircleShape).background(cs.tertiary))
-                        Text(n, style = MaterialTheme.typography.bodyMedium, color = cs.onSurface, modifier = Modifier.weight(1f))
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (i != null && (phase == UpdPhase.AVAILABLE || phase == UpdPhase.READY || phase == UpdPhase.ERROR)) {
+                    Text(stringResource(R.string.upd_whatsnew), style = MaterialTheme.typography.labelLarge, color = cs.tertiary)
+                    (notes.ifEmpty { listOf(stringResource(R.string.upd_general)) }).forEach { n ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(Modifier.padding(top = 7.dp).size(6.dp).clip(CircleShape).background(cs.tertiary))
+                            Text(n, style = MaterialTheme.typography.bodyMedium, color = cs.onSurface, modifier = Modifier.weight(1f))
+                        }
                     }
                 }
-                if (Updater.phase == UpdPhase.DOWNLOADING) {
+                if (phase == UpdPhase.DOWNLOADING) {
                     val p by animateFloatAsState(Updater.progress.coerceIn(0f, 1f), tween(Adaptive.ms(180)), label = "upd")
-                    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(cs.outlineVariant.copy(alpha = 0.6f))) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.fillMaxWidth().height(10.dp).clip(CircleShape).background(cs.outlineVariant.copy(alpha = 0.6f))) {
                             Box(
-                                Modifier.fillMaxWidth(p.coerceAtLeast(0.02f)).fillMaxHeight().clip(CircleShape)
+                                Modifier.fillMaxWidth(p.coerceAtLeast(0.03f)).fillMaxHeight().clip(CircleShape)
                                     .background(Brush.horizontalGradient(listOf(cs.tertiary.copy(alpha = 0.55f), cs.tertiary)))
                             )
                         }
-                        Text((p * 100).toInt().toString() + "%", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text((p * 100).toInt().toString() + "%", style = MaterialTheme.typography.labelLarge, color = cs.onSurface)
+                            val total = i?.size ?: 0L
+                            Text(
+                                fmtSize(Updater.bytes) + if (total > 0) " / " + fmtSize(total) else "",
+                                style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant
+                            )
+                        }
                     }
                 }
-                if (Updater.error.isNotBlank()) Text(Updater.error, style = MaterialTheme.typography.bodySmall, color = cs.error)
+                if (working) Text(stringResource(R.string.upd_wait), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                if (phase == UpdPhase.ERROR || (phase == UpdPhase.READY && Updater.error.isNotBlank())) {
+                    val e = Updater.error
+                    Text(if (e == "stalled" || e == "timeout") stringResource(R.string.upd_stalled) else e, style = MaterialTheme.typography.bodySmall, color = cs.error)
+                }
             }
         },
         confirmButton = {
             Button(
-                enabled = !busy, shape = CircleShape,
+                enabled = !working, shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(containerColor = cs.tertiary, contentColor = cs.onTertiary),
-                onClick = { when (Updater.phase) { UpdPhase.READY -> Updater.install(ctx); else -> Updater.download(ctx) } }
+                onClick = {
+                    when (phase) {
+                        UpdPhase.READY -> Updater.install(ctx)
+                        UpdPhase.DOWNLOADING -> Updater.cancel()
+                        UpdPhase.AVAILABLE -> Updater.download(ctx)
+                        UpdPhase.ERROR -> if (i != null) Updater.download(ctx) else Updater.check(ctx, true)
+                        else -> Updater.check(ctx, true)
+                    }
+                }
             ) {
-                Text(when (Updater.phase) {
-                    UpdPhase.READY -> L("تثبيت")
-                    UpdPhase.DOWNLOADING -> L("جارٍ التنزيل…")
-                    UpdPhase.INSTALLING -> L("جارٍ التثبيت…")
-                    else -> L("تنزيل وتثبيت")
+                Text(when (phase) {
+                    UpdPhase.READY -> stringResource(R.string.upd_install)
+                    UpdPhase.DOWNLOADING -> stringResource(R.string.upd_cancel)
+                    UpdPhase.AVAILABLE -> stringResource(R.string.upd_download)
+                    UpdPhase.ERROR -> stringResource(R.string.upd_retry)
+                    UpdPhase.CHECKING -> stringResource(R.string.upd_checking)
+                    UpdPhase.INSTALLING -> stringResource(R.string.upd_installing)
+                    else -> stringResource(R.string.upd_check)
                 }, fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
-            TextButton(enabled = !busy, onClick = { Updater.dismissPrompt() }) { Text(L("لاحقاً"), color = cs.onSurfaceVariant) }
+            TextButton(onClick = { Updater.dismissPrompt() }) { Text(stringResource(R.string.upd_close), color = cs.onSurfaceVariant) }
         }
     )
 }

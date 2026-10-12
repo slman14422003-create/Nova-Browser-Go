@@ -56,7 +56,8 @@ class PanelActivity : ComponentActivity() {
             NovaTheme(this) {
                 PanelHost(kind) { finish() }
                 // «التحقق من تحديث الآن» من الإعدادات: النافذة كانت تُرسم في الشاشة الرئيسية فقط (خلف هذه النافذة)، فلا يراها المستخدم إلا بعد العودة للرئيسية
-                if (Updater.prompt) UpdateDialog()
+                if (Updater.prompt || Updater.panel) UpdateDialog()
+                ConvertOfferDialog()
             }
         }
     }

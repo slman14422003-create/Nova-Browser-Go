@@ -154,6 +154,7 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
                 when {
                     done -> {
+                        if (kind == 1 && Mp3Lame.available) TextButton(onClick = { AudioConvert.toMp3(ctx.applicationContext, t) }) { Text(androidx.compose.ui.res.stringResource(R.string.conv_action)) }
                         TextButton(onClick = { shareFile(ctx, t) }) { Text(L("مشاركة")) }
                         FilledTonalButton(onClick = { openFile(ctx, t) }) { Text(L("فتح")) }
                     }

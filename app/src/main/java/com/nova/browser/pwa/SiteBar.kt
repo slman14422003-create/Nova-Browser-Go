@@ -94,20 +94,14 @@ fun SiteBar(
             if (onPip != null) GlyphButton(L("منبثق"), tap(onPip)) { c -> PipGlyph(c, Modifier.size(19.dp)) }
             if (onDownload != null) DownloadPill(L("تنزيل"), tap(onDownload))
             if (onPip == null && onDownload == null) {
-                val spin = if (loading && Adaptive.ms(100) > 0)
-                    rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "rot").value
-                else 0f
-                GlyphButton(L("تحديث"), tap(onReload), tonal = false) { c -> Icon(Icons.Default.Refresh, null, Modifier.size(20.dp).graphicsLayer { rotationZ = spin }, tint = c) }
+                GlyphButton(L("تحديث"), tap(onReload), tonal = false) { c ->
+                    if (loading) NovaSpinner(size = 22.dp, color = c) else Icon(Icons.Default.Refresh, null, Modifier.size(20.dp), tint = c)
+                }
                 GlyphButton(L("مشاركة"), tap(onShare), tonal = false) { c -> Icon(Icons.Default.Share, null, Modifier.size(19.dp), tint = c) }
             }
         }
-        // خط التقدّم + الفاصل
-        val p by animateFloatAsState(if (loading) progress.coerceIn(0.06f, 1f) else 0f, tween(Adaptive.ms(180)), label = "p")
         Box(Modifier.fillMaxWidth().height(UiLayout.PROGRESS_DP.dp)) {
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp).background(cs.outlineVariant.copy(alpha = 0.7f)))
-            if (p in 0.001f..0.999f)
-                Box(Modifier.fillMaxWidth(p).height(2.dp).align(Alignment.BottomStart)
-                    .background(Brush.horizontalGradient(listOf(cs.tertiary.copy(alpha = 0.4f), cs.tertiary))))
         }
     }
 }

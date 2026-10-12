@@ -95,9 +95,7 @@ fun BottomPill(
                 onPick = { onGo(it); setEditing(false); focus.clearFocus() },
                 onFill = { fill = it }
             )
-            if (tab.loading && !editing) {
-                LinearProgressIndicator(progress = { tab.progress }, modifier = Modifier.fillMaxWidth().height(3.dp), color = cs.tertiary, trackColor = Color.Transparent)
-            } else Spacer(Modifier.height(3.dp))
+            Spacer(Modifier.height(3.dp))
 
             AnimatedContent(
                 targetState = editing,

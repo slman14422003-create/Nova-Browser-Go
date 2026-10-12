@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONObject
@@ -30,6 +31,33 @@ object Updater {
     var error by mutableStateOf(""); private set
     /** هل تُعرض نافذة «يوجد تحديث» الآن. */
     var prompt by mutableStateOf(false); private set
+    var panel by mutableStateOf(false); private set
+    var bytes by mutableLongStateOf(0L); private set
+
+    @Volatile private var gen = 0
+    @Volatile private var stamp = 0L
+    private fun touch() { stamp = android.os.SystemClock.elapsedRealtime() }
+
+    fun unstick() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (phase == UpdPhase.DOWNLOADING && now - stamp > 25_000L) { gen++; error = "stalled"; phase = UpdPhase.ERROR }
+        else if (phase == UpdPhase.INSTALLING && now - stamp > 90_000L) { phase = UpdPhase.READY }
+        else if (phase == UpdPhase.CHECKING && now - stamp > 30_000L) { gen++; error = "timeout"; phase = UpdPhase.ERROR }
+    }
+
+    fun cancel() {
+        if (phase != UpdPhase.DOWNLOADING) return
+        gen++; progress = 0f; bytes = 0L; error = ""
+        phase = if (info != null) UpdPhase.AVAILABLE else UpdPhase.IDLE
+    }
+
+    fun openPanel(c: Context) {
+        panel = true
+        unstick()
+        if (phase == UpdPhase.IDLE || phase == UpdPhase.UP_TO_DATE || phase == UpdPhase.ERROR) check(c, true)
+    }
+
+    fun closePanel() { panel = false; prompt = false }
 
     private val main = Handler(Looper.getMainLooper())
     private fun ui(block: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block) }
@@ -54,7 +82,7 @@ object Updater {
     private fun openGet(url: String, viaProxy: String?, accept: String?): HttpURLConnection {
         val target = viaProxy ?: url
         val cn = URL(target).openConnection() as HttpURLConnection
-        cn.connectTimeout = 8000; cn.readTimeout = 20000; cn.instanceFollowRedirects = true
+        cn.connectTimeout = 8000; cn.readTimeout = 12000; cn.instanceFollowRedirects = true
         if (accept != null) cn.setRequestProperty("Accept", accept)
         return cn
     }
@@ -105,12 +133,13 @@ object Updater {
         return false
     }
 
-    fun dismissPrompt() { prompt = false }
+    fun dismissPrompt() { prompt = false; panel = false }
     fun showPrompt() { if (info != null) prompt = true }
 
     /** فحص التحديث؛ التلقائي (force=false) يحترم الإعداد وفاصل 12 ساعة ولا يُظهر أخطاء. */
     fun check(c: Context, force: Boolean = false) {
         val repo = BuildConfig.UPDATE_REPO
+        unstick()
         if (phase == UpdPhase.CHECKING || phase == UpdPhase.DOWNLOADING || phase == UpdPhase.INSTALLING) return
         if (repo.isBlank()) { if (force) { error = "no repo"; phase = UpdPhase.ERROR }; return }
         val app = c.applicationContext
@@ -119,7 +148,8 @@ object Updater {
             if (!Prefs.autoUpdate) return
             if (System.currentTimeMillis() - sp.getLong("last", 0L) < 12L * 3600_000L) return
         }
-        phase = UpdPhase.CHECKING; error = ""
+        phase = UpdPhase.CHECKING; error = ""; touch()
+        val my = ++gen
         Thread({
             try {
                 val cn = connect("https://api.github.com/repos/$repo/releases/latest", proxy.takeIf { it.isNotEmpty() }?.let { "$it/gh/repos/$repo/releases/latest" }, "application/vnd.github+json")
@@ -146,6 +176,7 @@ object Updater {
                 sp.edit().putLong("last", System.currentTimeMillis()).apply()
                 val newer = tag.isNotBlank() && isNewer(tag, BuildConfig.VERSION_NAME)
                 ui {
+                    if (my != gen) return@ui
                     if (newer) {
                         info = UpdateInfo(tag.removePrefix("v"), j.optString("body"), size, apk, j.optString("html_url"), sha)
                         phase = if (apkFile(app).exists() && apkFile(app).length() == size && size > 0) UpdPhase.READY else UpdPhase.AVAILABLE
@@ -154,56 +185,95 @@ object Updater {
                     } else { info = null; phase = UpdPhase.UP_TO_DATE }
                 }
             } catch (e: Exception) {
-                ui { if (force) { error = e.message ?: "error"; phase = UpdPhase.ERROR } else phase = UpdPhase.IDLE }
+                ui { if (my == gen) { if (force) { error = e.message ?: "error"; phase = UpdPhase.ERROR } else phase = UpdPhase.IDLE } }
             }
         }, "nova-update").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
-    /** تنزيل الـ APK إلى كاش التطبيق ثم التثبيت تلقائياً. */
+    private fun pull(url: String, via: String?, i: UpdateInfo, tmp: File, my: Int): String {
+        val cn = openGet(url, via, null)
+        try {
+            if (cn.responseCode != 200) throw java.io.IOException("HTTP " + cn.responseCode)
+            val fin = cn.url.toString()
+            if (!trustedUrl(fin) && !proxyHost(fin)) throw java.io.IOException("untrusted redirect")
+            val total = (cn.getHeaderField("Content-Length")?.trim()?.toLongOrNull() ?: 0L).takeIf { it > 0 } ?: i.size
+            var done = 0L
+            var lastUi = 0L
+            val md = MessageDigest.getInstance("SHA-256")
+            cn.inputStream.use { ins ->
+                tmp.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        if (my != gen) throw java.io.IOException("cancelled")
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        if (i.size > 0 && done + n > i.size + 1024) throw java.io.IOException("size mismatch")
+                        out.write(buf, 0, n); md.update(buf, 0, n); done += n
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastUi > 250) {
+                            lastUi = now
+                            val d = done
+                            val p = if (total > 0) (d.toFloat() / total).coerceIn(0f, 1f) else 0f
+                            ui { if (my == gen) { progress = p; bytes = d; touch() } }
+                        }
+                    }
+                }
+            }
+            if (i.size > 0 && done != i.size) throw java.io.IOException("incomplete")
+            return md.digest().joinToString("") { b -> "%02x".format(b) }
+        } finally {
+            runCatching { cn.disconnect() }
+        }
+    }
+
     fun download(c: Context) {
         val i = info ?: return
         val app = c.applicationContext
         val url = i.apkUrl
-        if (url.isNullOrBlank() || !trustedUrl(url)) { // لا ملف APK موثوق في الإصدار: نفتح صفحة الإصدار
+        if (url.isNullOrBlank() || !trustedUrl(url)) {
             runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(i.page)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             return
         }
-        if (phase == UpdPhase.DOWNLOADING) return
-        phase = UpdPhase.DOWNLOADING; progress = 0f; error = ""
+        unstick()
+        if (phase == UpdPhase.DOWNLOADING || phase == UpdPhase.INSTALLING) return
+        val my = ++gen
+        phase = UpdPhase.DOWNLOADING; progress = 0f; bytes = 0L; error = ""; touch()
         Thread({
+            val f = apkFile(app)
+            val tmp = File(f.parentFile, "nova-update.part")
+            val px = proxy.takeIf { it.isNotEmpty() }?.let { "$it/dl?u=" + java.net.URLEncoder.encode(url, "UTF-8") }
+            val routes = if (px != null) listOf<String?>(null, px) else listOf<String?>(null)
+            var got: String? = null
+            var failure: Exception? = null
+            for (via in routes) {
+                try {
+                    got = pull(url, via, i, tmp, my)
+                    break
+                } catch (e: Exception) {
+                    runCatching { tmp.delete() }
+                    if (my != gen) return@Thread
+                    failure = e
+                    ui { if (my == gen) { progress = 0f; bytes = 0L; touch() } }
+                }
+            }
+            if (my != gen) { runCatching { tmp.delete() }; return@Thread }
+            if (got == null) {
+                ui { if (my == gen) { error = failure?.message ?: "error"; phase = UpdPhase.ERROR } }
+                return@Thread
+            }
             try {
-                val f = apkFile(app); val tmp = File(f.parentFile, "nova-update.part")
-                val cn = connect(url, proxy.takeIf { it.isNotEmpty() }?.let { "$it/dl?u=" + java.net.URLEncoder.encode(url, "UTF-8") })
-                if (cn.responseCode != 200) throw java.io.IOException("HTTP " + cn.responseCode)
-                // بعد التحويلات: يجب أن نبقى على https وعلى نطاقات GitHub (أو الـ Worker الخاص بالمشروع)
-                if (!trustedUrl(cn.url.toString()) && !proxyHost(cn.url.toString())) { cn.disconnect(); throw java.io.IOException("untrusted redirect") }
-                val total = (cn.getHeaderField("Content-Length")?.trim()?.toLongOrNull() ?: 0L).takeIf { it > 0 } ?: i.size
-                var done = 0L; var lastUi = 0L
-                val md = MessageDigest.getInstance("SHA-256")
-                cn.inputStream.use { ins -> tmp.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = ins.read(buf); if (n < 0) break
-                        if (i.size > 0 && done + n > i.size + 1024) throw java.io.IOException("size mismatch")   // أكبر من المعلن: ملف مختلف
-                        out.write(buf, 0, n); md.update(buf, 0, n); done += n
-                        val now = android.os.SystemClock.elapsedRealtime()
-                        if (total > 0 && now - lastUi > 250) { lastUi = now; val p = (done.toFloat() / total).coerceIn(0f, 1f); ui { progress = p } }
-                    }
-                } }
-                cn.disconnect()
-                val got = md.digest().joinToString("") { b -> "%02x".format(b) }
-                if ((i.size > 0 && done != i.size) || (i.sha256.isNotEmpty() && got != i.sha256)) {
+                if (i.sha256.isNotEmpty() && got != i.sha256) {
                     tmp.delete()
-                    ui { error = "checksum mismatch"; phase = UpdPhase.ERROR }
+                    ui { if (my == gen) { error = "checksum mismatch"; phase = UpdPhase.ERROR } }
                     return@Thread
                 }
                 if (f.exists()) f.delete()
                 if (!tmp.renameTo(f)) throw java.io.IOException("rename failed")
                 val bad = verifyApk(app, f)
-                if (bad != null) { ui { reject(f, bad) }; return@Thread }
-                ui { progress = 1f; phase = UpdPhase.READY; install(app) }
+                if (bad != null) { ui { if (my == gen) reject(f, bad) }; return@Thread }
+                ui { if (my == gen) { progress = 1f; phase = UpdPhase.READY; install(app) } }
             } catch (e: Exception) {
-                ui { error = e.message ?: "error"; phase = UpdPhase.ERROR }
+                ui { if (my == gen) { error = e.message ?: "error"; phase = UpdPhase.ERROR } }
             }
         }, "nova-update-dl").apply { priority = Thread.MIN_PRIORITY }.start()
     }
@@ -220,7 +290,7 @@ object Updater {
             runCatching { app.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + app.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             return
         }
-        phase = UpdPhase.INSTALLING; error = ""
+        phase = UpdPhase.INSTALLING; error = ""; touch()
         Thread({
             try {
                 val pi = app.packageManager.packageInstaller

@@ -68,6 +68,12 @@ class DlTask(
 }
 
 object Downloader {
+    var offer by mutableStateOf<DlTask?>(null)
+
+    private fun offerConvert(t: DlTask) {
+        if (t.mime.startsWith("video/") && Mp3Lame.available) main.post { offer = t }
+    }
+
     const val PREPARING = 0
     const val DOWNLOADING = 1
     const val PAUSED = 2
@@ -160,6 +166,7 @@ object Downloader {
         t.status = DONE; t.resumable = false
         main.post { tasks.add(0, t); save() }
         notifyDone(t)
+        offerConvert(t)
     }
 
     fun removeOnMain(t: DlTask, deleteFile: Boolean) { main.post { remove(t, deleteFile) } }
@@ -424,7 +431,7 @@ object Downloader {
         t.downloaded = t.total; t.segSnap = emptyList(); t.status = DONE
         save()
         val cb = t.onDone
-        if (cb == null) notifyDone(t)
+        if (cb == null) { notifyDone(t); offerConvert(t) }
         else { work.incrementAndGet(); pool.execute { try { runCatching { cb(t) } } finally { work.decrementAndGet() } } }
     }
 

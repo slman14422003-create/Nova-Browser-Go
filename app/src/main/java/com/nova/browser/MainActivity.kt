@@ -908,6 +908,15 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                     }
                 }
                 AnimatedVisibility(
+                    visible = tab.loading && !editing && !inPip && !pageTyping && tab.url.isNotBlank(),
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = UiLayout.PILL + 14.dp),
+                    enter = fadeIn(tween(Adaptive.ms(120))), exit = fadeOut(tween(Adaptive.ms(120)))
+                ) {
+                    Surface(shape = CircleShape, color = cs.surfaceContainerHigh, shadowElevation = 4.dp, modifier = Modifier.size(40.dp)) {
+                        Box(contentAlignment = Alignment.Center) { NovaSpinner(size = 22.dp, color = cs.onSurface) }
+                    }
+                }
+                AnimatedVisibility(
                     visible = !inPip && !pageTyping, modifier = Modifier.align(Alignment.BottomCenter),
                     enter = fadeIn(tween(Adaptive.ms(160))), exit = fadeOut(tween(Adaptive.ms(90)))
                 ) {
@@ -924,7 +933,8 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
                 }
             }
         }
-        if (Updater.prompt) UpdateDialog()
+        if (Updater.prompt || Updater.panel) UpdateDialog()
+        ConvertOfferDialog()
         AnimatedVisibility(
             visible = showTabs,
             enter = fadeIn(tween(Adaptive.ms(180))) + slideInVertically(tween(Adaptive.ms(240), easing = FastOutSlowInEasing)) { it / 12 },
