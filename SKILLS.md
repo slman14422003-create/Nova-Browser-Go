@@ -17,3 +17,7 @@
 ## Notes
 - Project had no way to compile here (no Gradle/kotlinc offline): build once in CI and check for compile errors.
 - No README created (user preference). New code has no Arabic text; user-visible strings go in res/values*/strings.xml.
+
+## Task 2: HTTP 403 mid-download (YouTube)
+- googlevideo links are IP/session bound and throttle parallel ranges. YouTube tasks now use 1 connection (DlTask.connLimit) and on HTTP 403/410 fetch a fresh link via DlTask.refresher (max 4 times) and continue.
+- Not verified on device. If 403 persists, check VPN/IPv6 mismatch between the extractor client and the downloader.

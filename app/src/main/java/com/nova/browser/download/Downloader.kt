@@ -60,6 +60,9 @@ class DlTask(
     var lastBytes = 0L
     var lastTime = 0L
     var forcedName: String? = null                    // اسم ملف مفروض (مثل تنزيلات يوتيوب)
+    @Volatile var refresher: (() -> String?)? = null
+    @Volatile var connLimit = 0
+    val refreshes = AtomicInteger(0)
     @Volatile var onDone: ((DlTask) -> Unit)? = null  // يُستدعى عند الاكتمال (لا يُحفظ بعد إعادة التشغيل)
 }
 
@@ -272,13 +275,14 @@ object Downloader {
         t.channel = ParcelFileDescriptor.AutoCloseOutputStream(pfd).channel
     }
 
-    fun connsFor(total: Long): Int {
+    fun connsFor(total: Long, limit: Int = 0): Int {
         val auto = when {
             total < 1_000_000 -> 1
             total < 8_000_000 -> 4
             total < 64_000_000 -> 8
             else -> 16
         }
+        if (limit > 0) return minOf(auto, limit)
         return minOf(auto, if (Prefs.maxConns > 0) Prefs.maxConns else if (LowEnd.on) 6 else 16)   // اتصالات أقل = رام ومعالج أقل على الأجهزة الضعيفة
     }
 
@@ -287,7 +291,7 @@ object Downloader {
         if (!t.resumable || t.total <= 0) {
             t.segs.add(Seg(0, if (t.total > 0) t.total - 1 else Long.MAX_VALUE / 4)); return
         }
-        val n = connsFor(t.total); val part = t.total / n
+        val n = connsFor(t.total, t.connLimit); val part = t.total / n
         for (i in 0 until n) {
             val s = i * part
             t.segs.add(Seg(s, if (i == n - 1) t.total - 1 else s + part - 1))
@@ -300,7 +304,7 @@ object Downloader {
         t.segs.forEach { it.busy = false }
         t.lastBytes = downloadedOf(t); t.lastTime = SystemClock.elapsedRealtime(); t.speed = 0
         t.status = DOWNLOADING
-        val n = if (t.resumable && t.total > 0) connsFor(t.total) else 1
+        val n = if (t.resumable && t.total > 0) connsFor(t.total, t.connLimit) else 1
         t.active.set(n)
         repeat(n) { pool.execute { worker(t) } }
     }
@@ -340,9 +344,10 @@ object Downloader {
         while (seg.remaining > 0 && t.stopReason == 0) {
             val before = seg.pos
             var c: HttpURLConnection? = null
+            var usedUrlOf = t.url
             try {
                 val range = if (t.resumable) "bytes=${seg.pos}-${seg.end}" else null
-                val (conn, _) = connect(t, t.url, range)
+                val (conn, _) = connect(t, usedUrlOf, range)
                 c = conn
                 val code = conn.responseCode
                 if (t.resumable && code != 206) throw IOException("HTTP $code")
@@ -367,9 +372,21 @@ object Downloader {
                 fails = 0
             } catch (e: IOException) {
                 if (t.stopReason != 0) return
+                if ((e.message == "HTTP 403" || e.message == "HTTP 410") && refreshUrl(t, usedUrlOf)) { fails = 0; continue }
                 if (!t.resumable || ++fails > 6) throw e
                 Thread.sleep(400L * fails)
             } finally { c?.disconnect() }
+        }
+    }
+
+    private fun refreshUrl(t: DlTask, used: String): Boolean {
+        val r = t.refresher ?: return false
+        synchronized(t.lock) {
+            if (t.url != used) return true
+            if (t.refreshes.incrementAndGet() > 4) return false
+            val fresh = runCatching { r() }.getOrNull() ?: return false
+            t.url = fresh
+            return true
         }
     }
 

@@ -335,7 +335,7 @@ object YtFetch {
 object YtDownload {
     private fun safeName(s: String) = s.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(80).ifBlank { "video" }
 
-    fun start(ctx: Context, info: YtInfo, o: YtOpt) {
+    fun start(ctx: Context, info: YtInfo, o: YtOpt, pageUrl: String? = null) {
         val base = safeName(info.title)
         val ref = "https://www.youtube.com/"
         val f = o.fmt
@@ -347,8 +347,20 @@ object YtDownload {
             return
         }
         if (o.audioUrl == null) {
-            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base.${o.ext}", o.mime)
+            val single: () -> String? = {
+                val fi = pageUrl?.let { runCatching { YtFetch.info(it) }.getOrNull() }
+                val list = if (o.mime.startsWith("audio")) fi?.audios else fi?.videos?.filter { it.audioUrl == null }
+                (list?.firstOrNull { it.label == o.label } ?: list?.firstOrNull { it.ext == o.ext })?.url
+            }
+            Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base.${o.ext}", o.mime).also { it.refresher = single; it.connLimit = 1 }
             return
+        }
+        fun fresh(): YtInfo? = pageUrl?.let { runCatching { YtFetch.info(it) }.getOrNull() }
+        val vRef: () -> String? = {
+            fresh()?.videos?.firstOrNull { it.label == o.label && it.audioUrl != null }?.url
+        }
+        val aRef: () -> String? = {
+            fresh()?.audios?.firstOrNull { it.ext == "m4a" }?.url
         }
         val holder = arrayOfNulls<DlTask>(2)
         val left = AtomicInteger(2)
@@ -360,8 +372,8 @@ object YtDownload {
                 }.start()
             }
         }
-        holder[0] = Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [video].mp4", "video/mp4", finish)
-        holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_VR_UA, ref, "$base [audio].m4a", "audio/mp4", finish)
+        holder[0] = Downloader.startNamed(ctx, o.url, YT_VR_UA, ref, "$base [video].mp4", "video/mp4", finish).also { it.refresher = vRef; it.connLimit = 1 }
+        holder[1] = Downloader.startNamed(ctx, o.audioUrl, YT_VR_UA, ref, "$base [audio].m4a", "audio/mp4", finish).also { it.refresher = aRef; it.connLimit = 1 }
     }
 
     private fun runMux(app: Context, base: String, v: DlTask, a: DlTask) {
@@ -487,7 +499,7 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
         val r = withContext(Dispatchers.IO) { runCatching { YtFetch.info(url) } }
         r.onSuccess { info = it }.onFailure { err = it.message ?: it.javaClass.simpleName }
     }
-    fun pick(i: YtInfo, o: YtOpt) { YtDownload.start(ctx, i, o); toast(ctx, L("بدأ التنزيل — القائمة ⋮ ثم التنزيلات")); onStarted(); onDismiss() }
+    fun pick(i: YtInfo, o: YtOpt) { YtDownload.start(ctx, i, o, url); toast(ctx, L("بدأ التنزيل — القائمة ⋮ ثم التنزيلات")); onStarted(); onDismiss() }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = cs.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
