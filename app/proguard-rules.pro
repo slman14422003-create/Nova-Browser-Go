@@ -34,3 +34,8 @@
 
 -keep class com.naman14.androidlame.** { *; }
 -dontwarn com.naman14.androidlame.**
+
+-repackageclasses ''
+-allowaccessmodification
+-optimizationpasses 5
+-assumenosideeffects class android.util.Log { public static *** d(...); public static *** v(...); public static *** i(...); }

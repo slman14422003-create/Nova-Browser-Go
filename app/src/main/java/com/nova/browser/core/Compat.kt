@@ -24,7 +24,9 @@ object LowEnd {
             val am = c.applicationContext.getSystemService(ActivityManager::class.java)
             val lowRam = am != null && ActivityManagerCompat.isLowRamDevice(am)
             val heap = am?.memoryClass ?: 256
-            device = lowRam || heap <= 128 || Build.VERSION.SDK_INT <= 25 || Runtime.getRuntime().availableProcessors() <= 2
+            val mi = ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
+            val smallRam = mi.totalMem in 1L..(3L * 1024 * 1024 * 1024)
+            device = lowRam || smallRam || heap <= 192 || Build.VERSION.SDK_INT <= 27 || Runtime.getRuntime().availableProcessors() <= 4
         }
     }
 

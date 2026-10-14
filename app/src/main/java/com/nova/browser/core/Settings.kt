@@ -107,7 +107,7 @@ object Prefs {
         pwMode = if (p.contains("pwmode")) p.getInt("pwmode", 0).coerceIn(0, 2) else defaultPwMode(c)
         autoPip = p.getBoolean("autopip", true); ytBg = p.getBoolean("ytbg", true)
         autoUpdate = p.getBoolean("autoupd", true); adaptive = p.getBoolean("adaptive", true)
-        smoothAnim = p.getBoolean("anim", true); cap60 = p.getBoolean("cap60", true)
+        smoothAnim = p.getBoolean("anim", heavy); cap60 = p.getBoolean("cap60", true)
         fitPages = p.getBoolean("fitpages", true); pwaMode = p.getBoolean("pwa", true); pwaHaptics = p.getBoolean("pwahap", true);
         ytCcSize = p.getInt("yccsize", 1).coerceIn(0, 3); ytCcBg = p.getInt("yccbg", 0).coerceIn(0, 2); ytCcPos = p.getInt("yccpos", 0).coerceIn(0, 2)
         ytNoShorts = p.getBoolean("ytnoshorts", false)

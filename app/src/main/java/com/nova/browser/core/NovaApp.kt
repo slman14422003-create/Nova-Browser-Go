@@ -77,7 +77,11 @@ object Tls {
 class NovaApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        runCatching { Security.insertProviderAt(org.conscrypt.Conscrypt.newProvider(), 1) }
-        runCatching { Tls.install(this) }
+        val app = this
+        Thread {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            runCatching { Security.insertProviderAt(org.conscrypt.Conscrypt.newProvider(), 1) }
+            runCatching { Tls.install(app) }
+        }.start()
     }
 }

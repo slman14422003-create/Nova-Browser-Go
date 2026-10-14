@@ -280,12 +280,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val lvl = Adaptive.level
             LaunchedEffect(lvl, Prefs.cap60) { applyRefreshCap(lvl) }
-            LaunchedEffect(Unit) { kotlinx.coroutines.delay(4000); Updater.check(applicationContext); WebEngine.checkLatest(applicationContext) }   // بعد استقرار الواجهة
+            LaunchedEffect(Unit) { kotlinx.coroutines.delay(if (LowEnd.on) 20000L else 4000L); Updater.check(applicationContext); if (!LowEnd.on) WebEngine.checkLatest(applicationContext) }   // بعد استقرار الواجهة
             NovaTheme(this) { BrowserApp(start, dlTrigger, inPip, incoming) }
         }
         ready = true
         // تسخين محرك الـ WebView عند أول فراغ، حتى لا يتقطع أول بحث
-        android.os.Looper.myQueue().addIdleHandler { Perf.warmUp(applicationContext); if (!LowEnd.on) runCatching { WebView(applicationContext).destroy() }; false }
+        android.os.Looper.myQueue().addIdleHandler { if (!LowEnd.on) Perf.warmUp(applicationContext); if (!LowEnd.on) runCatching { WebView(applicationContext).destroy() }; false }
     }
     private fun onPipDismissed() {
         YtLog.add("native pip dismissed")
@@ -462,7 +462,7 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
         if (Adaptive.level >= 2 && t.thumb != null) return   // وفّر المعالج عند السخونة
         if (t.ytPlaying && t.thumb != null) return           // رسم صفحة فيها فيديو يعمل مكلف ويُسبب تقطيعاً
         runCatching {
-            val k = 0.4f
+            val k = if (LowEnd.on) 0.22f else 0.4f
             val bmp = Bitmap.createBitmap((w.width * k).toInt().coerceAtLeast(1), (w.height * k).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
             val c = android.graphics.Canvas(bmp); c.scale(k, k); w.draw(c)
             t.thumb = bmp
@@ -583,13 +583,13 @@ fun BrowserApp(startUrl: String, dlTrigger: Int, inPip: Boolean = false, incomin
     DisposableEffect(Unit) {
         val cb = object : ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) {
-                if (level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                if ((level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) || (LowEnd.on && (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN || level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE))) {
                     val cur = tabs.getOrNull(current)
                     tabs.toList().forEach { t -> if (t !== cur && !mediaLive(t)) { if (t.webView != null) discard(t); t.thumb = null } }
                 }
             }
             override fun onConfigurationChanged(c: android.content.res.Configuration) {}
-            @Deprecated("Deprecated in Java") override fun onLowMemory() {}
+            @Deprecated("Deprecated in Java") override fun onLowMemory() { onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE) }
         }
         activity.registerComponentCallbacks(cb)
         onDispose { activity.unregisterComponentCallbacks(cb) }

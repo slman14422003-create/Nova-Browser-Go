@@ -182,7 +182,7 @@ object Perf {
 
     /** تسخين محرك الويب وفحص الأمان مبكراً لتسريع أول تصفح. */
     fun warmUp(ctx: Context) {
-        if (android.os.Build.VERSION.SDK_INT >= 27) runCatching { WebView.startSafeBrowsing(ctx.applicationContext, null) }
+        if (!LowEnd.on && android.os.Build.VERSION.SDK_INT >= 27) runCatching { WebView.startSafeBrowsing(ctx.applicationContext, null) }
         runCatching { defaultUa(ctx) }
     }
 }
@@ -236,7 +236,7 @@ object Adaptive {
 
     /** عدد التبويبات الحيّة المسموح به: يقلّ كلما سخن الجهاز. */
     fun liveCap(base: Int): Int = when (level) {
-        0 -> if (LowEnd.on) minOf(base, 2) else base
+        0 -> if (LowEnd.on) 2 else base
         1 -> (base - 1).coerceAtLeast(2)
         else -> 2
     }
