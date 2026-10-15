@@ -35,7 +35,7 @@ object YtRec {
 
     private fun idOf(u: String?): String? = runCatching { YtFetch.canonical(u ?: "").substringAfter("v=") }.getOrNull()
 
-    private fun setPhase(p: Int) { ui.post { phase = p } }
+    private fun postPhase(p: Int) { ui.post { phase = p } }
 
     fun begin(ctx: Context, name: String, url: String? = null): Boolean {
         val w: WebView = YtSniff.view?.get() ?: return false
@@ -84,10 +84,10 @@ object YtRec {
                     os = app.contentResolver.openOutputStream(u)
                     live = os != null
                     if (live) ui.post { startedAt = System.currentTimeMillis(); size = 0L; phase = 2; toast(app, "Recording started - keep the video playing") }
-                    else { runCatching { Storage.delete(app, u) }; uri = null; setPhase(0); ui.post { stopPage() } }
+                    else { runCatching { Storage.delete(app, u) }; uri = null; postPhase(0); ui.post { stopPage() } }
                 } catch (e: Throwable) {
                     YtLog.add("rec start failed: $e")
-                    live = false; uri = null; setPhase(0); ui.post { stopPage() }
+                    live = false; uri = null; postPhase(0); ui.post { stopPage() }
                 }
             }
             "data" -> {
@@ -110,7 +110,7 @@ object YtRec {
         val u = uri
         runCatching { os?.flush(); os?.close() }
         os = null; uri = null; live = false
-        setPhase(0)
+        postPhase(0)
         if (u == null) return
         if (!ok || bytes <= 0L) {
             runCatching { Storage.delete(ctx, u) }
