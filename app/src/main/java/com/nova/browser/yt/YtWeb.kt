@@ -121,6 +121,11 @@ object YtWeb {
 
     private class Client(val tab: BrowserTab, val h: Handlers) : WebViewClient() {
         @Volatile var lastTouch = 0L   // أندرويد 6: تقدير «بلمسة مستخدم» من آخر لمسة
+        // The dedicated YouTube WebView must feed the sniffer: without this no player request is ever captured and downloads get PO-token-less links (403).
+        override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): android.webkit.WebResourceResponse? {
+            YtSniff.onRequest(r, tab.url)
+            return null
+        }
         override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
             tab.loading = true; tab.url = u; tab.shieldHost = Shield.hostFor(u)
             YtHub.onPageStart(v, u); YtMedia.pageChanged(tab, u)
