@@ -61,7 +61,7 @@ object WebSupport {
     private fun setOnline(v: Boolean) {
         val was = online
         online = v
-        attached.toList().forEach { runCatching { it.setNetworkAvailable(v) } }
+        attached.toList().forEach { runCatching { it.setNetworkAvailable(v); PageFetch.applyCache(it) } }
         if (v && !was) retryFailed()
     }
 
@@ -74,7 +74,7 @@ object WebSupport {
     // ---------- إعداد كل WebView جديد ----------
     fun configure(wv: WebView) {
         attached.add(wv)
-        runCatching { wv.setNetworkAvailable(online) }
+        runCatching { wv.setNetworkAvailable(online); PageFetch.applyCache(wv) }
         // المحرك يخفّض أولوية عملية العرض للتبويبات غير الظاهرة (توفير ذاكرة وحرارة)
         if (android.os.Build.VERSION.SDK_INT >= 26) runCatching { wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true) }
         // إزالة ترويسة X-Requested-With (تكشف اسم الحزمة وتجعل بعض المواقع تعامل التطبيق كمتصفح مضمَّن)

@@ -197,7 +197,8 @@ object Downloader {
         t.status = PREPARING; t.error = ""
         startService()
         pool.execute {
-            while (t.active.get() > 0) Thread.sleep(50)
+            var waited = 0
+            while (t.active.get() > 0 && waited++ < 300) Thread.sleep(50)
             if (t.stopReason == 2) { finish(t); return@execute }
             if (t.status == PAUSED) return@execute
             try {

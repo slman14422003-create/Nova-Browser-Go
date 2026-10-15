@@ -648,12 +648,16 @@ try {
           fr.readAsDataURL(ev.data);
         }); });
       };
-      function fin() { if (done) return; done = true; q.then(function () { send({ t: 'rec', k: 'end' }); window.__novaRec = null; e.removeEventListener('ended', stop); }); }
+      function pz() { try { if (r.state === 'recording') r.pause(); } catch (x) {} }
+      function rs() { try { if (r.state === 'paused') r.resume(); } catch (x) {} }
+      function fin() { if (done) return; done = true; e.removeEventListener('pause', pz); e.removeEventListener('playing', rs); q.then(function () { send({ t: 'rec', k: 'end' }); window.__novaRec = null; e.removeEventListener('ended', stop); }); }
       function stop() { try { if (r.state !== 'inactive') r.stop(); } catch (x) { fin(); } }
       r.onstop = fin;
       r.onerror = function () { send({ t: 'rec', k: 'err' }); stop(); };
       window.__novaRec = { r: r, mt: mt || r.mimeType || 'audio/webm', stop: stop };
       e.addEventListener('ended', stop);
+      e.addEventListener('pause', pz);
+      e.addEventListener('playing', rs);
       window.addEventListener('pagehide', stop, { once: true });
       try { e.currentTime = 0; e.playbackRate = 1; var p = e.play(); if (p && p.catch) p.catch(function () {}); } catch (x) {}
       r.start(2000);

@@ -7,6 +7,11 @@ import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -31,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -539,18 +546,61 @@ private fun DlTab(label: String, selected: Boolean, modifier: Modifier, onClick:
     }
 }
 
+private fun fmtSize(b: Long): String = if (b >= 1048576L) "%.1f MB".format(b / 1048576.0) else "%d KB".format(b / 1024)
+
 @Composable
-private fun RecordRow(title: String, onDone: () -> Unit) {
+private fun RecDot(rec: Boolean) {
+    val a = if (rec) {
+        val t = rememberInfiniteTransition(label = "rec")
+        val v by t.animateFloat(1f, 0.3f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "recAlpha")
+        v
+    } else 1f
+    Box(Modifier.size(46.dp).clip(CircleShape).background(Color(0x33E53935)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(16.dp).alpha(a).clip(CircleShape).background(Color(0xFFE53935)))
+    }
+}
+
+@Composable
+private fun RecordCard(name: String, url: String) {
     val cs = MaterialTheme.colorScheme
     val ctx = LocalContext.current
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainerHigh)
-            .clickable { if (YtRec.begin(ctx, title)) onDone() else toast(ctx, "Open the video page first") }.padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically
+    val phase = YtRec.phase
+    val rec = phase == 2
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(phase) { while (phase == 2) { now = System.currentTimeMillis(); delay(500) } }
+    val secs = if (rec) ((now - YtRec.startedAt) / 1000).coerceAtLeast(0L) else 0L
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(if (rec) cs.errorContainer.copy(alpha = 0.4f) else cs.surfaceContainer).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Column(Modifier.weight(1f)) {
-            Text("Record audio from page", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            Text("Works when links fail. Real-time: plays while it records.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RecDot(rec)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Record from video", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    when (phase) {
+                        2 -> (if (secs <= 0L) "0:00" else fmtDur(secs)) + "  \u2022  " + fmtSize(YtRec.size)
+                        1 -> "Starting..."
+                        else -> "Plays the video and saves its audio to a file"
+                    },
+                    style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant
+                )
+            }
+        }
+        if (phase == 0) Text("Takes as long as the song. Keep the video playing until it finishes.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        Box(
+            Modifier.fillMaxWidth().clip(CircleShape).background(if (rec) cs.error else cs.tertiary)
+                .clickable(enabled = phase != 1) {
+                    if (rec) YtRec.stop()
+                    else if (!YtRec.begin(ctx, name, url)) toast(ctx, "Open this video page first, then try again")
+                }.padding(vertical = 13.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                when (phase) { 2 -> "Stop and save"; 1 -> "Starting..."; else -> "Start recording" },
+                color = if (rec) cs.onError else cs.onTertiary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -563,8 +613,7 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
     var info by remember { mutableStateOf<YtInfo?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
-    var tab by remember { mutableIntStateOf(0) }   // 0 فيديو، 1 صوت
-    // معرّف الفيديو معروف فوراً من الرابط: الصورة المصغّرة تظهر قبل انتهاء جلب الصيغ
+    var tab by remember { mutableIntStateOf(if (YtRec.phase != 0) 1 else 0) }
     val vid = remember(url) { runCatching { YtFetch.canonical(url).substringAfter("v=") }.getOrNull() }
     LaunchedEffect(url, attempt) {
         info = null; err = null
@@ -572,6 +621,7 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
         r.onSuccess { info = it }.onFailure { err = it.message ?: it.javaClass.simpleName }
     }
     fun pick(i: YtInfo, o: YtOpt) { YtDownload.start(ctx, i, o, url); toast(ctx, L("بدأ التنزيل — القائمة ⋮ ثم التنزيلات")); onStarted(); onDismiss() }
+    val recName = info?.title ?: YtSniff.view?.get()?.title.orEmpty().removeSuffix(" - YouTube").ifBlank { "audio" }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = cs.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
@@ -579,7 +629,6 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             val i = info
 
-            // بطاقة الفيديو: صورة مصغّرة + العنوان + القناة + المدة
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cs.surfaceContainer).padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -607,9 +656,17 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                 }
             }
 
-            when {
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DlTab(L("فيديو") + if (i != null && i.videos.isNotEmpty()) " (${i.videos.size})" else "", tab == 0, Modifier.weight(1f)) { tab = 0 }
+                DlTab(L("صوت فقط"), tab == 1, Modifier.weight(1f)) { tab = 1 }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            if (tab == 1) {
+                RecordCard(recName, url)
+            } else when {
                 err != null -> {
-                    Spacer(Modifier.height(14.dp))
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cs.errorContainer.copy(alpha = 0.35f)).padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -620,7 +677,6 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                             Text(L("تعذّر جلب الفيديو"), color = cs.error, fontWeight = FontWeight.Bold)
                         }
                         Text(err ?: "", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 7, overflow = TextOverflow.Ellipsis)
-                        RecordRow(info?.title ?: YtSniff.view?.get()?.title.orEmpty().removeSuffix(" - YouTube")) { onDismiss() }
                         Row(
                             Modifier.clip(CircleShape).background(cs.tertiary).clickable { attempt++ }.padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -632,48 +688,30 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                     }
                 }
                 i == null -> {
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(8.dp))
                     NovaLoadingRow(L("جارٍ جلب الصيغ المتاحة…"))
-                    Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(8.dp))
                 }
-                else -> {
-                    if (i.videos.isEmpty() && i.audios.isEmpty()) {
-                        Spacer(Modifier.height(14.dp))
-                        Text(L("لا توجد صيغ قابلة للتنزيل لهذا الفيديو (قد يكون بثاً مباشراً)"), color = cs.onSurfaceVariant)
-                    } else {
-                        val showVideo = i.audios.isEmpty() || (tab == 0 && i.videos.isNotEmpty())
-                        Spacer(Modifier.height(16.dp))
-                        if (i.videos.isNotEmpty() && i.audios.isNotEmpty()) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                DlTab(L("فيديو") + " (${i.videos.size})", showVideo, Modifier.weight(1f)) { tab = 0 }
-                                DlTab(L("صوت فقط") + " (${i.audios.size})", !showVideo, Modifier.weight(1f)) { tab = 1 }
+                i.videos.isEmpty() -> Text(L("لا توجد صيغ قابلة للتنزيل لهذا الفيديو (قد يكون بثاً مباشراً)"), color = cs.onSurfaceVariant)
+                else -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    i.videos.forEachIndexed { n, o ->
+                        ListRow(
+                            groupShape(n, i.videos.size), o.label, o.sub, { pick(i, o) },
+                            trailing = {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (n == 0) DlPill(L("الأفضل"), accent = true)
+                                    DlPill(o.ext.uppercase())
+                                }
                             }
-                            Spacer(Modifier.height(12.dp))
-                        }
-                        val list = if (showVideo) i.videos else i.audios
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            list.forEachIndexed { n, o ->
-                                ListRow(
-                                    groupShape(n, list.size), o.label, o.sub, { pick(i, o) },
-                                    trailing = {
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            if (showVideo && n == 0) DlPill(L("الأفضل"), accent = true)
-                                            if (o.fmt == null) DlPill(o.ext.uppercase())
-                                        }
-                                    }
-                                ) { IconCircle { Icon(Icons.Default.KeyboardArrowDown, null) } }
-                            }
-                        }
+                        ) { IconCircle { Icon(Icons.Default.KeyboardArrowDown, null) } }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    RecordRow(i.title) { onDismiss() }
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        L("للاستخدام الشخصي فقط — احترم حقوق صاحب المحتوى وشروط الخدمة."), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainer).padding(12.dp)
-                    )
                 }
             }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                L("للاستخدام الشخصي فقط — احترم حقوق صاحب المحتوى وشروط الخدمة."), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainer).padding(12.dp)
+            )
         }
     }
 }

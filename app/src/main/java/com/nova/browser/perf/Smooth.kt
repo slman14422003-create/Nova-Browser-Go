@@ -54,6 +54,7 @@ object Perf {
     val privacyHeaders: Map<String, String>
         get() {
             val h = linkedMapOf("DNT" to "1", "Sec-GPC" to "1")
+            if (Prefs.dataSaver) h["Save-Data"] = "on"
             val al = LangUtil.acceptLanguage(Prefs.siteLangCode())   // لغة المواقع المفضّلة
             if (al.isNotEmpty()) h["Accept-Language"] = al
             return h
