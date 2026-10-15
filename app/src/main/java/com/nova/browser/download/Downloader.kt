@@ -243,6 +243,10 @@ object Downloader {
     private fun open(t: DlTask, url: String, range: String?): Conn {
         if (!(url.startsWith("https://") || url.startsWith("http://"))) throw IOException("unsupported scheme")
         val gv = isGoogleVideo(url)
+        if (gv) runCatching {
+            val u = Uri.parse(url)
+            u.getQueryParameter("ip")?.let { ip -> u.host?.let { h -> V4Dns.wantV6[h] = ip.contains(':') } }
+        }
         val b = okhttp3.Request.Builder().url(url).header("Accept-Encoding", "identity")
         if (t.ua.isNotBlank()) b.header("User-Agent", t.ua)
         if (!gv) {
@@ -577,7 +581,16 @@ fun v4first(l: List<java.net.InetAddress>): List<java.net.InetAddress> {
 }
 
 object V4Dns : okhttp3.Dns {
-    override fun lookup(hostname: String): List<java.net.InetAddress> = v4first(okhttp3.Dns.SYSTEM.lookup(hostname))
+    /** googlevideo links are bound to the IP they were issued for: connect with the same address family as the link's ip= parameter. */
+    val wantV6 = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    override fun lookup(hostname: String): List<java.net.InetAddress> {
+        val all = okhttp3.Dns.SYSTEM.lookup(hostname)
+        return when (wantV6[hostname]) {
+            true -> all.filter { it is java.net.Inet6Address }.ifEmpty { all }
+            false -> v4first(all)
+            null -> v4first(all)
+        }
+    }
 }
 
 object DlHttp {

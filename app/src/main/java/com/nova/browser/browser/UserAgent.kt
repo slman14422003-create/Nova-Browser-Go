@@ -19,7 +19,10 @@ const val DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTM
 fun applyUa(wv: WebView, desktop: Boolean) {
     val s = wv.settings
     s.userAgentString = if (desktop) WebEngine.desktopUa()
-    else reduceUa(Perf.defaultUa(wv.context).replace("; wv", "").replace(UA_VERSION_RE, ""))
+    else reduceUa(Perf.defaultUa(wv.context).replace("; wv", "").replace(UA_VERSION_RE, "")).let { ua ->
+        val m = WebEngine.uaMajor
+        if (WebEngine.outdated && m > 0) ua.replace(UA_CHROME_RE, "Chrome/$m.0.0.0") else ua
+    }
     WebEngine.applyMetadata(wv, desktop)
     s.useWideViewPort = true
     s.loadWithOverviewMode = true   // الصفحات الأعرض من الشاشة (بلا viewport) تُصغَّر لتناسب العرض

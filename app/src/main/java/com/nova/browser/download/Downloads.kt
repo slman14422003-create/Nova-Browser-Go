@@ -63,7 +63,7 @@ private fun statusLine(t: DlTask): String {
         }
         Downloader.CONVERTING -> Downloader.str(R.string.conv_progress) + " • " + (t.convPct * 100).toInt() + "%"
         Downloader.PAUSED -> (L("متوقف • ") + (fmtSize(t.downloaded)) + " / " + tot)
-        Downloader.FAILED -> (L("فشل: ") + (t.error))
+        Downloader.FAILED -> (L("فشل: ") + t.error.substringBefore(" host=").lineSequence().first().take(70))
         else -> ("" + tot + L(" • اكتمل"))
     }
 }

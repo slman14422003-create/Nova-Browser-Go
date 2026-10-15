@@ -38,6 +38,9 @@ object WebEngine {
     // التحديث التدريجي (staged rollout) يجعل المحرك يتأخر إصداراً أو اثنين طبيعياً، فلا ننبّه إلا عند تأخر 3 إصدارات فأكثر
     val outdated: Boolean get() = behind >= 3
 
+    /** Chrome major advertised to sites: the newest stable one when the installed engine is far behind, so sites keep serving current pages. */
+    val uaMajor: Int get() = if (outdated && latestMajor > 0) latestMajor else (info?.major ?: 0)
+
     fun init(c: Context) {
         try {
             val p = WebViewCompat.getCurrentWebViewPackage(c)
@@ -51,16 +54,16 @@ object WebEngine {
 
     /** User-Agent سطح المكتب بآخر إصدار مثبّت (بدل رقم ثابت قديم). */
     fun desktopUa(): String {
-        val m = info?.major?.takeIf { it > 0 } ?: 130
+        val m = uaMajor.takeIf { it > 0 } ?: 130
         return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$m.0.0.0 Safari/537.36"
     }
 
     /** Client Hints (Sec-CH-UA…) متوافقة مع الـ User-Agent، فلا تعاملنا المواقع كمتصفح مضمَّن قديم. */
     fun applyMetadata(wv: WebView, desktop: Boolean) {
         val i = info ?: return
-        if (i.major <= 0 || !WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
+        if (uaMajor <= 0 || !WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
         runCatching {
-            val major = i.major.toString()
+            val major = uaMajor.toString()
             val full = if (Prefs.antiFingerprint) "$major.0.0.0" else i.version
             fun b(brand: String, maj: String, fv: String) =
                 UserAgentMetadata.BrandVersion.Builder().setBrand(brand).setMajorVersion(maj).setFullVersion(fv).build()

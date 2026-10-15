@@ -55,6 +55,7 @@ fun createWebView(ctx: Context, tab: BrowserTab, h: Handlers): WebView = WebView
     Perf.installSmooth(this)
     WebSupport.configure(this)
     WebCompat.install(this)
+    PageAssist.install(this)
     Pwa.install(this)
     PasswordBridge.install(this, tab, h)
     WebMedia.install(this, tab, h)
