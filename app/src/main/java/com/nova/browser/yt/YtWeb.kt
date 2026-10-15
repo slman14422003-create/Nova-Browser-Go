@@ -128,7 +128,7 @@ object YtWeb {
         }
         override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
             tab.loading = true; tab.url = u; tab.shieldHost = Shield.hostFor(u)
-            YtHub.onPageStart(v, u); YtMedia.pageChanged(tab, u)
+            YtHub.onPageStart(v, u); YtMedia.pageChanged(tab, u); runCatching { v.settings.setOffscreenPreRaster(!LowEnd.on && Adaptive.level == 0) }
         }
         override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) {
             // يوتيوب صفحة أحادية (SPA): التنقل بين الفيديوهات لا يستدعي onPageStarted

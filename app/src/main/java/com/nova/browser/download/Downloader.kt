@@ -406,7 +406,7 @@ object Downloader {
                 fails = 0
             } catch (e: IOException) {
                 if (t.stopReason != 0) return
-                if ((e.message == "HTTP 403" || e.message == "HTTP 410") && refreshUrl(t, usedUrlOf)) { fails = 0; continue }
+                if ((e.message == "HTTP 403" || e.message == "HTTP 404" || e.message == "HTTP 410") && refreshUrl(t, usedUrlOf)) { fails = 0; continue }
                 if (!t.resumable || ++fails > 6) throw e
                 Thread.sleep(400L * fails)
             } finally { c?.disconnect() }

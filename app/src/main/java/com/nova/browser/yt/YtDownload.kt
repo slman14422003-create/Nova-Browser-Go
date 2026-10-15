@@ -539,6 +539,22 @@ private fun DlTab(label: String, selected: Boolean, modifier: Modifier, onClick:
     }
 }
 
+@Composable
+private fun RecordRow(title: String, onDone: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainerHigh)
+            .clickable { if (YtRec.begin(ctx, title)) onDone() else toast(ctx, "Open the video page first") }.padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Record audio from page", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text("Works when links fail. Real-time: plays while it records.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
@@ -604,6 +620,7 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                             Text(L("تعذّر جلب الفيديو"), color = cs.error, fontWeight = FontWeight.Bold)
                         }
                         Text(err ?: "", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 7, overflow = TextOverflow.Ellipsis)
+                        RecordRow(info?.title ?: YtSniff.view?.get()?.title.orEmpty().removeSuffix(" - YouTube")) { onDismiss() }
                         Row(
                             Modifier.clip(CircleShape).background(cs.tertiary).clickable { attempt++ }.padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -648,6 +665,8 @@ fun YtDownloadSheet(url: String, onDismiss: () -> Unit, onStarted: () -> Unit) {
                             }
                         }
                     }
+                    Spacer(Modifier.height(14.dp))
+                    RecordRow(i.title) { onDismiss() }
                     Spacer(Modifier.height(14.dp))
                     Text(
                         L("للاستخدام الشخصي فقط — احترم حقوق صاحب المحتوى وشروط الخدمة."), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,

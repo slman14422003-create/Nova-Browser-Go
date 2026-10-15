@@ -627,6 +627,42 @@ try {
     return 'ok';
   };
 
+  // Record the page's own audio (works with any stream type: no links, tokens or ranges involved). Real-time, plays while recording.
+  window.__novaRecStart = function () {
+    var e = v();
+    if (!e) return 'novideo';
+    if (window.__novaRec) return 'busy';
+    if (!e.captureStream || !window.MediaRecorder) return 'unsupported';
+    try {
+      var at = e.captureStream().getAudioTracks();
+      if (!at.length) return 'noaudio';
+      var mt = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].filter(function (m) { return MediaRecorder.isTypeSupported(m); })[0] || '';
+      var r = new MediaRecorder(new MediaStream(at), mt ? { mimeType: mt, audioBitsPerSecond: 128000 } : {});
+      var q = Promise.resolve(), done = false;
+      r.ondataavailable = function (ev) {
+        if (!ev.data || !ev.data.size) return;
+        q = q.then(function () { return new Promise(function (res) {
+          var fr = new FileReader();
+          fr.onload = function () { send({ t: 'rec', k: 'data', b: String(fr.result).split(',')[1] || '' }); res(); };
+          fr.onerror = function () { res(); };
+          fr.readAsDataURL(ev.data);
+        }); });
+      };
+      function fin() { if (done) return; done = true; q.then(function () { send({ t: 'rec', k: 'end' }); window.__novaRec = null; e.removeEventListener('ended', stop); }); }
+      function stop() { try { if (r.state !== 'inactive') r.stop(); } catch (x) { fin(); } }
+      r.onstop = fin;
+      r.onerror = function () { send({ t: 'rec', k: 'err' }); stop(); };
+      window.__novaRec = { r: r, mt: mt || r.mimeType || 'audio/webm', stop: stop };
+      e.addEventListener('ended', stop);
+      window.addEventListener('pagehide', stop, { once: true });
+      try { e.currentTime = 0; e.playbackRate = 1; var p = e.play(); if (p && p.catch) p.catch(function () {}); } catch (x) {}
+      r.start(2000);
+      send({ t: 'rec', k: 'start', mime: window.__novaRec.mt });
+      return 'ok';
+    } catch (x) { window.__novaRec = null; return 'err ' + x; }
+  };
+  window.__novaRecStop = function () { var o = window.__novaRec; if (o) o.stop(); };
+
   // النافذة المنبثقة: يملأ الفيديو الشاشة ويُخفى كل ما عداه. التراجع (false) آمن دائماً ويُستدعى أيضاً عند كل عودة للواجهة
   window.__novaPip = function (on) {
     var id = '__nova_pip_css', old = document.getElementById(id), e = v();

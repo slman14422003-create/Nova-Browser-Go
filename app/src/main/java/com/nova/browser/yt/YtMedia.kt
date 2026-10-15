@@ -98,10 +98,11 @@ object YtBridge {
             WebViewCompat.addWebMessageListener(wv, "NovaYt", origins, WebViewCompat.WebMessageListener { view, message, _, isMain, _ ->
                 if (!isMain) return@WebMessageListener
                 val data = message.data ?: return@WebMessageListener
-                val isPlayer = data.startsWith("{\"t\":\"player\"")
+                val isPlayer = data.startsWith("{\"t\":\"player\"") || data.startsWith("{\"t\":\"rec\"")
                 if (data.length > (if (isPlayer) 800_000 else 6000)) return@WebMessageListener
                 val o = runCatching { JSONObject(data) }.getOrNull() ?: return@WebMessageListener
                 val type = o.optString("t")
+                if (type == "rec") { YtRec.onMessage(view.context.applicationContext, o); return@WebMessageListener }
                 if (type == "player") {
                     val pv = o.optString("vid")
                     if (pv.length == 11) {
