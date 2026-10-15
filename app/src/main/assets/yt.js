@@ -483,7 +483,7 @@ try {
   };
 
   // إيقاف جاء من خارج الصفحة (نظام/WebView): نستأنف ما لم يطلب المستخدم الإيقاف
-  var burstAt = 0, burstN = 0, retryT = 0;
+  var burstAt = 0, burstN = 0, retryT = 0, fightAt = 0, fightN = 0;
   document.addEventListener('play', function () { userPaused = false; }, true);
   document.addEventListener('pause', function (ev) {
     var e = v();
@@ -492,6 +492,9 @@ try {
     var now = Date.now();
     if (now - burstAt > 3000) { burstAt = now; burstN = 0; }
     if (++burstN > 8) return;   // يوتيوب يصرّ على الإيقاف فعلاً: لا نتصارع معه
+    // hard back-off: repeated bursts mean the page keeps pausing while hidden; stop fighting for 30 s (saves CPU/battery)
+    if (now - fightAt > 30000) { fightAt = now; fightN = 0; }
+    if (burstN === 1 && ++fightN > 6) return;
     if (now - lastResume < 400) {
       // إيقاف ثانٍ قريب جداً من الاستئناف (يحدث عند تدوير الشاشة) كان يُهمل فيبقى الفيديو متوقفاً: نعيد المحاولة بعد قليل
       clearTimeout(retryT);
