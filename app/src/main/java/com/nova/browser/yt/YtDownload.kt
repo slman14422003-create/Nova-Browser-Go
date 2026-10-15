@@ -50,7 +50,7 @@ const val YT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/201
 const val YT_IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
 const val YT_TV_UA = "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15"
 
-fun ytUaFor(url: String): String = when (runCatching { Uri.parse(url).getQueryParameter("c") }.getOrNull()) {
+fun ytUaFor(url: String): String = if (YtSniff.isPageId(runCatching { Uri.parse(url).getQueryParameter("id") }.getOrNull())) YtSniff.pageUa().ifBlank { YT_UA } else when (runCatching { Uri.parse(url).getQueryParameter("c") }.getOrNull()) {
     "ANDROID_VR" -> YT_VR_UA
     "IOS" -> YT_IOS_UA
     "TVHTML5_SIMPLY_EMBEDDED_PLAYER" -> YT_TV_UA
@@ -104,7 +104,7 @@ object YtFetch {
     @Volatile private var lastGood: String? = null
     @Volatile private var directBlockedAt = 0L
     /** Called after a direct googlevideo link returned 403: skip InnerTube for a while and use the proxy/Piped path. */
-    fun markDirectBlocked() { directBlockedAt = System.currentTimeMillis() }
+    fun markDirectBlocked() { directBlockedAt = System.currentTimeMillis(); YtSniff.clearPlayers() }
     private fun directBlocked() = System.currentTimeMillis() - directBlockedAt < 15 * 60_000L
     @Volatile private var live: List<String>? = null
 

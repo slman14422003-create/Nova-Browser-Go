@@ -25,8 +25,21 @@ object YtSniff {
     private val players = ConcurrentHashMap<String, Pair<Long, String>>()
 
     /** Called by the page bridge with the result of window.__novaPlayer (empty json = every client failed). */
+    private val pageIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    fun isPageId(id: String?) = id != null && pageIds.contains(id)
+    fun pageUa(): String = ua.ifBlank { runCatching { view?.get()?.settings?.userAgentString }.getOrNull().orEmpty() }
+    fun clearPlayers() { players.clear() }
+
     fun putPlayer(vid: String, json: String, vd: String) {
         if (vd.isNotBlank()) visitor = vd
+        if (json.isNotEmpty()) runCatching {
+            val o = JSONObject(json)
+            for (k in arrayOf("videoStreams", "audioStreams")) {
+                val a = o.optJSONArray(k) ?: continue
+                for (i in 0 until a.length()) Uri.parse(a.getJSONObject(i).optString("url")).getQueryParameter("id")?.let { pageIds.add(it) }
+            }
+            if (pageIds.size > 400) pageIds.clear()
+        }
         players[vid] = System.currentTimeMillis() to json
         if (players.size > 6) players.entries.minByOrNull { it.value.first }?.let { players.remove(it.key) }
     }

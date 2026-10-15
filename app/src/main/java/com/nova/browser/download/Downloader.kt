@@ -369,7 +369,9 @@ object Downloader {
             var c: Conn? = null
             var usedUrlOf = t.url
             try {
-                val range = if (t.resumable) "bytes=${seg.pos}-${seg.end}" else null
+                // googlevideo rejects very large open ranges with 403: request it in 4 MB chunks (the loop continues until the segment is done)
+                val chunkEnd = if (isGoogleVideo(usedUrlOf)) minOf(seg.end, seg.pos + 4L * 1024 * 1024 - 1) else seg.end
+                val range = if (t.resumable) "bytes=${seg.pos}-$chunkEnd" else null
                 val (conn, _) = connect(t, usedUrlOf, range)
                 c = conn
                 val code = conn.responseCode
