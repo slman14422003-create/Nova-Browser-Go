@@ -546,7 +546,7 @@ private fun DlTab(label: String, selected: Boolean, modifier: Modifier, onClick:
     }
 }
 
-private fun fmtSize(b: Long): String = if (b >= 1048576L) "%.1f MB".format(b / 1048576.0) else "%d KB".format(b / 1024)
+private fun recSize(b: Long): String = if (b >= 1048576L) "%.1f MB".format(b / 1048576.0) else "%d KB".format(b / 1024)
 
 @Composable
 private fun RecDot(rec: Boolean) {
@@ -580,7 +580,7 @@ private fun RecordCard(name: String, url: String) {
                 Text("Record from video", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
                     when (phase) {
-                        2 -> (if (secs <= 0L) "0:00" else fmtDur(secs)) + "  \u2022  " + fmtSize(YtRec.size)
+                        2 -> (if (secs <= 0L) "0:00" else fmtDur(secs)) + "  \u2022  " + recSize(YtRec.size)
                         1 -> "Starting..."
                         else -> "Plays the video and saves its audio to a file"
                     },
