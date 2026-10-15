@@ -553,6 +553,77 @@ try {
     return 'ok';
   };
 
+  window.__novaPlayer = function (vid) {
+    if (!vid) return 'none';
+    if (window.__novaPlayerBusy) return 'busy';
+    window.__novaPlayerBusy = 1;
+    var cfg = function (k) { try { return (window.ytcfg && ytcfg.get && ytcfg.get(k)) || ''; } catch (x) { return ''; } };
+    var vd = cfg('VISITOR_DATA'), key = cfg('INNERTUBE_API_KEY');
+    var CL = [
+      { n: 'ANDROID_VR', v: '1.65.10', id: '28', c: { deviceMake: 'Oculus', deviceModel: 'Quest 3', osName: 'Android', osVersion: '12L', androidSdkVersion: 32 } },
+      { n: 'IOS', v: '20.10.4', id: '5', c: { deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '18.3.2.22D82' } },
+      { n: 'ANDROID_VR', v: '1.60.19', id: '28', c: { deviceMake: 'Oculus', deviceModel: 'Quest 3', osName: 'Android', osVersion: '12L', androidSdkVersion: 32 } },
+      { n: 'WEB_EMBEDDED_PLAYER', v: '1.20250310.01.00', id: '56', c: { clientScreen: 'EMBED' }, embed: 1 },
+      { n: 'MWEB', v: '2.20250310.01.00', id: '2', c: {} }
+    ];
+    function shape(j) {
+      var sd = j.streamingData || {}, vs = [], au = [], i, o, m;
+      var f = sd.formats || [], a = sd.adaptiveFormats || [];
+      for (i = 0; i < f.length; i++) {
+        o = f[i]; m = String(o.mimeType || '');
+        if (o.url && m.indexOf('video/mp4') === 0) vs.push({ url: o.url, mimeType: m, quality: o.qualityLabel || 'video', videoOnly: false });
+      }
+      for (i = 0; i < a.length; i++) {
+        o = a[i]; m = String(o.mimeType || '');
+        if (!o.url) continue;
+        if (m.indexOf('video/mp4') === 0 && m.indexOf('avc1') > 0) vs.push({ url: o.url, mimeType: m, quality: o.qualityLabel || 'video', videoOnly: true });
+        else if (m.indexOf('audio/') === 0) au.push({ url: o.url, mimeType: m, bitrate: o.bitrate || 0 });
+      }
+      var d = j.videoDetails || {};
+      return { title: d.title || '', uploader: d.author || '', duration: parseInt(d.lengthSeconds || '0', 10) || 0, videoStreams: vs, audioStreams: au };
+    }
+    function finish(data, err) {
+      window.__novaPlayerBusy = 0;
+      var o = { t: 'player', vid: vid, vd: vd };
+      if (data) o.json = JSON.stringify(data); else o.err = String(err || '').slice(0, 200);
+      send(o);
+    }
+    // 1) the page's own player response (already authorised by the page session)
+    try {
+      var mp = document.getElementById('movie_player');
+      var pr = mp && mp.getPlayerResponse && mp.getPlayerResponse();
+      if (pr && pr.videoDetails && pr.videoDetails.videoId === vid) {
+        var d0 = shape(pr);
+        if (d0.videoStreams.length && d0.audioStreams.length) return finish(d0), 'page';
+      }
+    } catch (x) {}
+    var idx = 0, last = '';
+    function next() {
+      if (idx >= CL.length) return finish(null, last || 'no client worked');
+      var c = CL[idx++], ctl = window.AbortController ? new AbortController() : null, tm = setTimeout(function () { try { ctl && ctl.abort(); } catch (x) {} }, 8000);
+      var client = { clientName: c.n, clientVersion: c.v, hl: 'en', gl: 'US' };
+      for (var k in c.c) client[k] = c.c[k];
+      if (vd) client.visitorData = vd;
+      var ctx = { client: client };
+      if (c.embed) ctx.thirdParty = { embedUrl: 'https://www.youtube.com/watch?v=' + vid };
+      var h = { 'Content-Type': 'application/json', 'X-Youtube-Client-Name': c.id, 'X-Youtube-Client-Version': c.v };
+      if (vd) h['X-Goog-Visitor-Id'] = vd;
+      fetch('/youtubei/v1/player?prettyPrint=false' + (key ? '&key=' + encodeURIComponent(key) : ''), {
+        method: 'POST', credentials: 'include', headers: h, signal: ctl ? ctl.signal : undefined,
+        body: JSON.stringify({ videoId: vid, contentCheckOk: true, racyCheckOk: true, context: ctx })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        clearTimeout(tm);
+        var st = j && j.playabilityStatus && j.playabilityStatus.status;
+        if (st !== 'OK') { last = c.n + ' ' + st + ' ' + String((j && j.playabilityStatus && j.playabilityStatus.reason) || '').slice(0, 50); return next(); }
+        var d = shape(j);
+        if (d.videoStreams.length || d.audioStreams.length) return finish(d);
+        last = c.n + ' no formats'; next();
+      }).catch(function (e) { clearTimeout(tm); last = c.n + ' ' + (e && e.message); next(); });
+    }
+    next();
+    return 'ok';
+  };
+
   // النافذة المنبثقة: يملأ الفيديو الشاشة ويُخفى كل ما عداه. التراجع (false) آمن دائماً ويُستدعى أيضاً عند كل عودة للواجهة
   window.__novaPip = function (on) {
     var id = '__nova_pip_css', old = document.getElementById(id), e = v();

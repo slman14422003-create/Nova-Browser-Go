@@ -199,7 +199,7 @@ object YtFetch {
             val arr = JSONArray(httpGet("https://piped-instances.kavin.rocks/", 8))
             (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optString("api_url").trimEnd('/').takeIf { u -> u.startsWith("https://") } }
         }.getOrDefault(emptyList())
-        live = list
+        if (list.isNotEmpty()) live = list
         return list
     }
 
@@ -208,6 +208,9 @@ object YtFetch {
     private val CLIENTS = listOf(
         Cl("ANDROID_VR", YT_VR_VER, "28", YT_VR_UA) {
             put("deviceMake", "Oculus"); put("deviceModel", "Quest 3"); put("osName", "Android"); put("osVersion", "12L"); put("androidSdkVersion", 32)
+        },
+        Cl("IOS", "20.10.4", "5", YT_IOS_UA) {
+            put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2"); put("osName", "iPhone"); put("osVersion", "18.3.2.22D82")
         },
         Cl("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "2.0", "85", "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15") {
             put("clientScreen", "EMBED")
@@ -218,12 +221,15 @@ object YtFetch {
     private fun innertube(id: String, c: Cl): String {
         val cl = JSONObject().put("clientName", c.name).put("clientVersion", c.ver).put("hl", "en").put("gl", "US")
         c.ctx(cl)
+        val vd = YtSniff.visitor
+        if (vd.isNotBlank()) cl.put("visitorData", vd)
         val ctx = JSONObject().put("client", cl)
         if (c.name.startsWith("TVHTML5")) ctx.put("thirdParty", JSONObject().put("embedUrl", "https://www.youtube.com/"))
         val body = JSONObject().put("videoId", id).put("contentCheckOk", true).put("racyCheckOk", true).put("context", ctx)
         val req = okhttp3.Request.Builder().url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
             .header("User-Agent", c.ua).header("X-YouTube-Client-Name", c.id).header("X-YouTube-Client-Version", c.ver)
             .header("Origin", "https://www.youtube.com")
+            .apply { if (vd.isNotBlank()) header("X-Goog-Visitor-Id", vd) }
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         client.newCall(req).execute().use { r ->
             val txt = r.body.string()
@@ -276,6 +282,11 @@ object YtFetch {
                 null
             }
         }
+        // 1) fetched from inside the page session (fast, no playback side effects)
+        runCatching { YtSniff.player(id) }.getOrNull()?.let { j ->
+            runCatching { parse(j) }.getOrNull()?.let { r -> if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r }
+        }
+        // 2) links captured from the page's own player requests
         run {
             val meta = runCatching {
                 val o = JSONObject(httpGet("https://www.youtube.com/oembed?format=json&url=" + java.net.URLEncoder.encode(canonical(url), "UTF-8"), 5))
@@ -291,7 +302,11 @@ object YtFetch {
                     val r = parse(innertube(id, c))
                     if (r.videos.isNotEmpty() || r.audios.isNotEmpty()) return r
                     ytErr = "${c.name}: no downloadable formats"
-                } catch (e: Exception) { ytErr = "${c.name}: " + (e.message ?: e.javaClass.simpleName); YtLog.add("innertube $ytErr") }
+                } catch (e: Exception) {
+                    val m = "${c.name}: " + (e.message ?: e.javaClass.simpleName)
+                    ytErr = if (ytErr.isBlank()) m else ytErr + "\n" + m
+                    YtLog.add("innertube $m")
+                }
             }
             return null
         }
@@ -332,8 +347,13 @@ object YtFetch {
             }
             audiosAll.add(A(url, o.optInt("bitrate", 0) / 1000, ext))
         }
-        val aac = audiosAll.filter { it.ext == "m4a" }.maxByOrNull { it.bitrateK }
+        val aacOnly = audiosAll.filter { it.ext == "m4a" }.maxByOrNull { it.bitrateK }
         val opus = audiosAll.filter { it.ext == "webm" }.maxByOrNull { it.bitrateK }
+        // No separate audio stream: a muxed MP4 still carries an AAC track that merge/convert can read.
+        val muxedSrc: A? = if (aacOnly != null) null else (0 until videoArr.length()).map { videoArr.getJSONObject(it) }
+            .firstOrNull { !it.optBoolean("videoOnly", true) && it.optString("url").isNotBlank() && it.optString("mimeType").contains("mp4") }
+            ?.let { A(it.optString("url"), 128, "m4a") }
+        val aac = aacOnly ?: muxedSrc
 
         fun qnum(s: String) = Regex("(\\d+)").find(s)?.value?.toIntOrNull() ?: 0
         val videos = ArrayList<YtOpt>()
@@ -357,7 +377,7 @@ object YtFetch {
             val m4 = a.ext == "m4a"
             audios.add(YtOpt((if (m4) "M4A AAC" else "WebM Opus") + " - ${a.bitrateK} kbps", if (m4) L("الملف الأصلي AAC بلا تحويل") else L("الملف الأصلي Opus بلا تحويل"), a.url, a.ext, if (m4) "audio/mp4" else "audio/webm"))
         }
-        (aac ?: opus)?.let { src -> AudioFormats.all.forEachIndexed { idx, f -> audios.add(idx, YtOpt(f.label, f.sub, src.url, src.ext, if (src.ext == "m4a") "audio/mp4" else "audio/webm", null, f)) } }
+        (aacOnly ?: opus ?: muxedSrc)?.let { src -> AudioFormats.all.forEachIndexed { idx, f -> audios.add(idx, YtOpt(f.label, f.sub, src.url, src.ext, if (src.ext == "m4a") "audio/mp4" else "audio/webm", null, f)) } }
 
         return YtInfo(j.optString("title"), j.optString("uploader"), videos, audios, j.optLong("duration"))
     }
@@ -439,7 +459,7 @@ object Mux {
 
     private fun sampleCap(f: android.media.MediaFormat): Int {
         val v = if (f.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE)) f.getInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE) else 0
-        return if (v > 0) v.coerceIn(256 * 1024, 8 * 1024 * 1024) else 2 * 1024 * 1024
+        return if (v > 0) v.coerceIn(256 * 1024, if (LowEnd.on) 2 * 1024 * 1024 else 8 * 1024 * 1024) else 2 * 1024 * 1024
     }
 
     fun mux(ctx: Context, video: Uri, audio: Uri, out: Uri) {

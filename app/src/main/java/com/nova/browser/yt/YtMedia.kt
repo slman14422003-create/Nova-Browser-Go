@@ -98,9 +98,18 @@ object YtBridge {
             WebViewCompat.addWebMessageListener(wv, "NovaYt", origins, WebViewCompat.WebMessageListener { view, message, _, isMain, _ ->
                 if (!isMain) return@WebMessageListener
                 val data = message.data ?: return@WebMessageListener
-                if (data.length > 6000) return@WebMessageListener
+                val isPlayer = data.startsWith("{\"t\":\"player\"")
+                if (data.length > (if (isPlayer) 800_000 else 6000)) return@WebMessageListener
                 val o = runCatching { JSONObject(data) }.getOrNull() ?: return@WebMessageListener
                 val type = o.optString("t")
+                if (type == "player") {
+                    val pv = o.optString("vid")
+                    if (pv.length == 11) {
+                        YtSniff.putPlayer(pv, o.optString("json"), o.optString("vd"))
+                        if (o.has("err")) YtLog.add("page player: " + o.optString("err"))
+                    }
+                    return@WebMessageListener
+                }
                 if (type == "log") { YtLog.add(o.optString("m")); return@WebMessageListener }
                 if (type != "state") return@WebMessageListener
                 tab.ytPlaying = o.optBoolean("playing")

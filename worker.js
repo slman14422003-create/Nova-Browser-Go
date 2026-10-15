@@ -21,6 +21,11 @@ const CLIENTS = [
     ctx: { deviceMake: "Oculus", deviceModel: "Quest 3", osName: "Android", osVersion: "12L", androidSdkVersion: 32 },
   },
   {
+    name: "IOS", ver: "20.10.4", id: "5",
+    ua: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+    ctx: { deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.3.2.22D82" },
+  },
+  {
     name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER", ver: "2.0", id: "85",
     ua: "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15",
     ctx: {}, embed: true,

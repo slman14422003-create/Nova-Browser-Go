@@ -21,7 +21,7 @@ object AudioFormats {
     private val mp3: List<AudioFmt> = listOf(128, 192, 320).map { k ->
         AudioFmt("MP3 - $k kbps", "MP3 (LAME)", "mp3", "audio/mpeg", "mp3", listOf(k.toString()))
     }
-    val all: List<AudioFmt> get() = if (Mp3Lame.available) mp3 else emptyList()
+    val all: List<AudioFmt> get() = mp3
 }
 
 object Mp3Lame {
@@ -145,13 +145,18 @@ object AudioConvert {
         var out: Uri? = null
         try {
             val kbps = fmt.codecArgs.firstOrNull()?.toIntOrNull() ?: 128
-            val dst = Storage.create(app, "$base.mp3", fmt.mime)
+            val lame = Mp3Lame.available
+            val ext = if (lame) "mp3" else "m4a"
+            val mime = if (lame) fmt.mime else "audio/mp4"
+            val dst = Storage.create(app, "$base.$ext", mime)
             out = dst
-            val os = r.openOutputStream(dst) ?: throw IOException("no output")
-            os.use { encode(app, srcUri, BufferedOutputStream(it, 64 * 1024), kbps) }
-            Storage.finish(app, dst, fmt.mime)
+            if (lame) {
+                val os = r.openOutputStream(dst) ?: throw IOException("no output")
+                os.use { encode(app, srcUri, BufferedOutputStream(it, 64 * 1024), kbps) }
+            } else remux(app, srcUri, dst) {}
+            Storage.finish(app, dst, mime)
             val size = r.openFileDescriptor(dst, "r")?.use { it.statSize } ?: -1L
-            Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.mp3", dst, fmt.mime, size)
+            Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.$ext", dst, mime, size)
             Downloader.removeOnMain(src, true)
         } catch (e: Throwable) {
             out?.let { runCatching { Storage.delete(app, it) } }

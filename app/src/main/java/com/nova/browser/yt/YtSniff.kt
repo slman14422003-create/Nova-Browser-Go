@@ -21,6 +21,32 @@ object YtSniff {
     private val groups = ConcurrentHashMap<String, Group>()
     @Volatile var ua: String = ""
     @Volatile var view: WeakReference<WebView>? = null
+    @Volatile var visitor: String = ""
+    private val players = ConcurrentHashMap<String, Pair<Long, String>>()
+
+    /** Called by the page bridge with the result of window.__novaPlayer (empty json = every client failed). */
+    fun putPlayer(vid: String, json: String, vd: String) {
+        if (vd.isNotBlank()) visitor = vd
+        players[vid] = System.currentTimeMillis() to json
+        if (players.size > 6) players.entries.minByOrNull { it.value.first }?.let { players.remove(it.key) }
+    }
+
+    /** Runs the in-page InnerTube fetch (page cookies + visitor data) and waits for its result. Fast path, no playback side effects. */
+    fun player(vid: String, maxMs: Long = 9000L): String? {
+        val w = view?.get() ?: return null
+        val start = System.currentTimeMillis()
+        players[vid]?.let { if (start - it.first < 4 * 60_000L && it.second.isNotEmpty()) return it.second }
+        players.remove(vid)
+        Handler(Looper.getMainLooper()).post {
+            runCatching { w.evaluateJavascript("window.__novaPlayer&&window.__novaPlayer(" + JSONObject.quote(vid) + ")", null) }
+        }
+        while (System.currentTimeMillis() - start < maxMs) {
+            try { Thread.sleep(150) } catch (_: InterruptedException) { return null }
+            val r = players[vid] ?: continue
+            return r.second.takeIf { it.isNotEmpty() }
+        }
+        return null
+    }
 
     fun videoId(url: String?): String {
         val u = runCatching { Uri.parse(url ?: "") }.getOrNull() ?: return ""
