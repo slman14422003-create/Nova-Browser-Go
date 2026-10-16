@@ -81,11 +81,158 @@
       }
     });
 
+    // ───────────── 2b) وضع الفويس ─────────────
+    var voiceLive = 0, awakeLive = 0, locks = [];
+    function keepAwake() { send({ t: 'awake', voice: voiceLive > 0, wake: awakeLive > 0 }); }
+
+    // speechSynthesis: عند غياب محرك TTS أو تجمّده لا يصل start/end أبداً فتعلق الواجهة على «تحويل النص إلى كلام»
+    safe(function () {
+      var ss = window.speechSynthesis;
+      if (!ss || !window.SpeechSynthesisUtterance || ss.__novaWd) return;
+      var speak = ss.speak, cancel = ss.cancel, getVoices = ss.getVoices, vt = 0;
+      ss.__novaWd = 1;
+      function emit(u, type, extra) {
+        try {
+          var ev = new Event(type);
+          if (extra) for (var k in extra) { try { ev[k] = extra[k]; } catch (e) {} }
+          u.dispatchEvent(ev);
+        } catch (e) {}
+      }
+      ss.speak = function (u) {
+        try {
+          if (u && u.addEventListener && !u.__novaWd && !(ss.speaking || ss.pending)) {
+            u.__novaWd = 1;
+            var done = false, started = false, t1 = 0, t2 = 0;
+            var finish = function () { done = true; clearTimeout(t1); clearTimeout(t2); };
+            u.addEventListener('start', function () { started = true; clearTimeout(t1); });
+            u.addEventListener('end', finish);
+            u.addEventListener('error', finish);
+            var len = String(u.text || '').length, rate = u.rate > 0 ? u.rate : 1;
+            t1 = setTimeout(function () {
+              if (done || started) return;
+              done = true; clearTimeout(t2);
+              try { cancel.call(ss); } catch (e) {}
+              emit(u, 'error', { error: 'synthesis-failed' });
+              emit(u, 'end');
+            }, 5000);
+            t2 = setTimeout(function () {
+              if (done) return;
+              done = true; clearTimeout(t1);
+              try { cancel.call(ss); } catch (e) {}
+              emit(u, 'end');
+            }, 12000 + (len * 180) / rate);
+          }
+        } catch (e) {}
+        return speak.apply(ss, arguments);
+      };
+      ss.getVoices = function () {
+        var v = getVoices.apply(ss, arguments);
+        if ((!v || !v.length) && !vt) vt = setTimeout(function () { try { ss.dispatchEvent(new Event('voiceschanged')); } catch (e) {} }, 600);
+        return v;
+      };
+      window.addEventListener('pagehide', function () { try { cancel.call(ss); } catch (e) {} });
+    });
+
+    // AudioContext: يُستأنف تلقائياً إن علق في suspended (بعد الميكروفون أو لمسة أو عودة للصفحة)
+    var ctxs = [];
+    function wake() {
+      for (var i = ctxs.length - 1; i >= 0; i--) {
+        var c = ctxs[i];
+        if (!c || c.state === 'closed') { ctxs.splice(i, 1); continue; }
+        if (c.state === 'suspended') { try { var p = c.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+      }
+    }
+    safe(function () {
+      ['AudioContext', 'webkitAudioContext'].forEach(function (n) {
+        var C = window[n];
+        if (!C || C.__novaPx || typeof Proxy !== 'function' || typeof Reflect !== 'object') return;
+        try { C.__novaPx = 1; } catch (e) {}
+        window[n] = new Proxy(C, {
+          construct: function (t, a, nt) {
+            var c = Reflect.construct(t, a, nt);
+            ctxs.push(c); if (ctxs.length > 20) ctxs.shift();
+            try { c.addEventListener('statechange', function () { if (voiceLive > 0 && c.state === 'suspended') wake(); }); } catch (e) {}
+            return c;
+          }
+        });
+      });
+    });
+
+    // play() المرفوض بسبب سياسة التشغيل التلقائي يُعاد بعد أول لمسة
+    var waiting = [];
+    safe(function () {
+      var play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        var m = this, p = play.apply(m, arguments);
+        if (p && p.catch) p = p.catch(function (e) {
+          if (e && e.name === 'NotAllowedError' && waiting.indexOf(m) < 0 && waiting.length < 8) waiting.push(m);
+          throw e;
+        });
+        return p;
+      };
+      window.__novaPlayAgain = function () {
+        waiting.splice(0).forEach(function (m) {
+          try { if (m.isConnected && m.paused) { var q = play.call(m); if (q && q.catch) q.catch(function () {}); } } catch (e) {}
+        });
+      };
+    });
+    ['touchend', 'click', 'keydown'].forEach(function (n) {
+      document.addEventListener(n, function (e) { if (e.isTrusted) { wake(); if (window.__novaPlayAgain) window.__novaPlayAgain(); } }, { capture: true, passive: true });
+    });
+
+    // الميكروفون: نبقي الشاشة مضاءة أثناء الاستماع ونوقظ الصوت بعد منح الإذن
+    function trackVoice(s) {
+      voiceLive++; keepAwake();
+      var t = setInterval(function () {
+        var live = false;
+        try { live = s.active && s.getAudioTracks().some(function (k) { return k.readyState === 'live'; }); } catch (e) {}
+        if (!live) { clearInterval(t); voiceLive = Math.max(0, voiceLive - 1); keepAwake(); }
+      }, 1500);
+    }
+    safe(function () {
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) return;
+      var gum = md.getUserMedia.bind(md);
+      md.getUserMedia = function (c) {
+        var want = !!(c && c.audio);
+        return gum(c).then(function (s) { wake(); if (want) trackVoice(s); return s; });
+      };
+    });
+
+    // Screen Wake Lock → إبقاء شاشة التطبيق مضاءة
+    function releaseLocks() { locks.splice(0).forEach(function (s) { try { s.release(); } catch (e) {} }); }
+    safe(function () {
+      def(navigator, 'wakeLock', {
+        request: function (type) {
+          if (type && type !== 'screen') return Promise.reject(new TypeError('Unsupported wake lock type'));
+          var ls = [];
+          var s = {
+            released: false, type: 'screen', onrelease: null,
+            addEventListener: function (t, f) { if (t === 'release' && typeof f === 'function') ls.push(f); },
+            removeEventListener: function (t, f) { var i = ls.indexOf(f); if (i >= 0) ls.splice(i, 1); },
+            release: function () {
+              if (s.released) return Promise.resolve();
+              s.released = true; awakeLive = Math.max(0, awakeLive - 1); keepAwake();
+              var i = locks.indexOf(s); if (i >= 0) locks.splice(i, 1);
+              var ev = { type: 'release', target: s };
+              try { if (typeof s.onrelease === 'function') s.onrelease(ev); } catch (e) {}
+              ls.slice().forEach(function (f) { try { f(ev); } catch (e) {} });
+              return Promise.resolve();
+            }
+          };
+          locks.push(s); awakeLive++; keepAwake();
+          return Promise.resolve(s);
+        }
+      });
+    });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) releaseLocks(); else wake(); });
+    window.addEventListener('pagehide', function () { releaseLocks(); voiceLive = 0; awakeLive = 0; keepAwake(); });
+
     // ───────────── 3) مظهر وإحساس التطبيق (CSS) ─────────────
     var css =
       '*{-webkit-tap-highlight-color:transparent}' +
       'html{--nova-sat:env(safe-area-inset-top,0px);--nova-sab:env(safe-area-inset-bottom,0px);touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior-y:none}' +   // بلا تأخير نقرتين ولا ارتداد التمرير
-      'body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overscroll-behavior-y:none}' +
+      'body{-webkit-font-smoothing:antialiased;text-rendering:' + (LIGHT || !CFG.anim ? 'optimizeSpeed' : 'optimizeLegibility') + ';overscroll-behavior-y:none}' +
       '::-webkit-scrollbar{display:none}' +
       'input,textarea{-webkit-user-select:text;user-select:text}' +
       'button,[role=button],[role=tab],summary,select{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}' +

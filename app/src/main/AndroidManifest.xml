@@ -21,6 +21,8 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <queries>
         <intent><action android:name="android.support.customtabs.action.CustomTabsService" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
         <package android:name="com.samsung.android.samsungpassautofill" />
         <package android:name="com.samsung.android.samsungpass" />
     </queries>

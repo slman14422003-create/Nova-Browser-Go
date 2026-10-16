@@ -14,7 +14,7 @@
   function rnd() { st = (Math.imul(st, 1664525) + 1013904223) >>> 0; return st / 4294967296; }
   // مواقع جوجل/يوتيوب: لا نعدّل Canvas/WebGL/الصوت/قياس الخطوط فيها. هذه الخطافات تُبطئ صفحاتها الثقيلة (وضع الذكاء الاصطناعي، المشغّل)
   // ولا فائدة منها هناك أصلاً لأن جوجل تعرفك عبر حسابك. تبقى حماية الـ Navigator الخفيفة.
-  var LIGHT = /(^|\.)(google\.[a-z.]+|youtube\.com|gstatic\.com|googleusercontent\.com|ytimg\.com|googlevideo\.com)$/.test(String(location.hostname));
+  var LIGHT = /(^|\.)(google\.[a-z.]+|youtube\.com|gstatic\.com|googleusercontent\.com|ytimg\.com|googlevideo\.com|chatgpt\.com|openai\.com|claude\.ai|perplexity\.ai|copilot\.microsoft\.com|deepseek\.com|grok\.com|poe\.com|mistral\.ai)$/.test(String(location.hostname));
   function def(o, p, v) { try { Object.defineProperty(o, p, { get: function () { return v; }, configurable: true }); } catch (e) {} }
   function noisePx(a) {
     var n = a.length, flips = 0, first = -1;

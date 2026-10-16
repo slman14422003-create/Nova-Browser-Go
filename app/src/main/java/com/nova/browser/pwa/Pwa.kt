@@ -36,6 +36,8 @@ object Pwa {
         runCatching { Perf.asset("pwa.js") }.getOrNull()
     }
 
+    private val pageAwake = java.util.WeakHashMap<WebView, Boolean>()
+
     private val docStart by lazy { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }
     private val listenerOk by lazy { WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) }
 
@@ -52,6 +54,12 @@ object Pwa {
                 when (o.optString("t")) {
                     "share" -> { val t = o.optString("text").take(2000); if (t.isNotBlank()) runCatching { shareText(view.context, t) } }
                     "hap" -> if (Prefs.pwaHaptics) view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                    "awake" -> {
+                        // الشاشة تبقى مضاءة أثناء الفويس/Wake Lock فقط إن طلبته الصفحة؛ لا نمسّ خيار المستخدم اليدوي
+                        val on = o.optBoolean("voice") || o.optBoolean("wake")
+                        if (on) { pageAwake[view] = true; view.keepScreenOn = true }
+                        else if (pageAwake.remove(view) == true) view.keepScreenOn = false
+                    }
                 }
             })
         }
@@ -66,6 +74,7 @@ object Pwa {
      * يُنفَّذ عند بدء الصفحة وللنطاقات المسموحة فقط؛ السكربت نفسه يحمي من التنفيذ المزدوج (__novaPwa).
      */
     fun onPageStart(wv: WebView, url: String) {
+        if (pageAwake.remove(wv) == true) wv.keepScreenOn = false   // صفحة جديدة: تنتهي قفلة الشاشة التي طلبتها السابقة
         if (docStart || !Prefs.pwaMode) return
         val base = js ?: return
         val o = runCatching { Uri.parse(url) }.getOrNull() ?: return
