@@ -55,3 +55,7 @@
 - Strings added to values/ and values-ar/ (dl_phase_*, dl_err_403, dl_err_stalled, dl_saved_original, dl_copy_error, dl_failed_title).
 - Not compiled/tested here (no Gradle or network offline): build in CI and check for compile errors. Risky API names to check first: YoutubeDL.destroyProcessById, YoutubeDL.UpdateChannel (looked up by reflection).
 - If 403 still shows after both engines: copy the error details from the card (includes the diagnostics log) and send it.
+
+## Task 7: error details copy
+- "Copy error details" now copies only the yt-dlp / innertube / http 4xx log lines (last 2500 chars) so the primary yt-dlp failure is not pushed out by the backup engine's log spam.
+- Open question: 403 persists with VPN off; waiting for the yt-dlp lines to see why the primary engine fails (bot check vs PO token).
