@@ -91,7 +91,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")                  // ActivityManagerCompat/ServiceCompat/NotificationManagerCompat… (توافق أندرويد 6 وGo)
     implementation("androidx.webkit:webkit:1.16.0")             // حقن سكربت الحماية قبل الصفحة (1.16: أحدث مستقر، يدعم ميزات المحرك الجديدة)
     implementation("androidx.browser:browser:1.8.0")              // Chrome Custom Tabs لصفحات تسجيل الدخول الحساسة
-    implementation("com.squareup.okhttp3:okhttp:5.5.0")            // شبكة HTTP/2 — تُستخدم في أكثر من مكان بالتطبيق (الاقتراحات، الحماية)
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")            // شبكة HTTP/2 — تُستخدم في أكثر من مكان بالتطبيق (الاقتراحات، الحماية)
     implementation("androidx.profileinstaller:profileinstaller:1.4.1") // ملفات Baseline لتسريع بدء التشغيل وتقليل التقطيع
     // تنزيل يوتيوب: بلا أي مكتبة استخراج/فك-تشفير محلية — خادم Piped العام (مفتوح المصدر) يرجّع روابط تنزيل جاهزة
     // عبر JSON عادي (org.json)، فيعمل على كل الأجهزة من أندرويد 7 فصاعداً بلا أي قيود توافق. انظر YtFetch في yt/YtDownload.kt
