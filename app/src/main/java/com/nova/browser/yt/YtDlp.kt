@@ -13,7 +13,7 @@ import java.util.UUID
 
 object YtDlp {
     private const val SCHEME = "ytdlp:"
-    private val clients = listOf("default", "android_vr", "tv", "ios")
+    private val clients = listOf("android_vr", "tv", "ios", "default")
     @Volatile private var ready = false
     @Volatile private var triedUpdate = false
 
@@ -48,6 +48,7 @@ object YtDlp {
         val r = YoutubeDLRequest(url)
         r.addOption("--no-playlist")
         r.addOption("--no-warnings")
+        r.addOption("--force-ipv4")
         if (client != "default") r.addOption("--extractor-args", "youtube:player_client=$client")
         val qjs = File(app.applicationInfo.nativeLibraryDir, "libqjs.so")
         if (qjs.exists()) r.addOption("--js-runtimes", "quickjs:" + qjs.absolutePath)
@@ -140,6 +141,21 @@ object YtDlp {
             ?: throw IOException("no output file")
     }
 
+    private fun tryFetch(app: Context, url: String, tries: List<Pair<String, String>>, dir: File, tag: String, onProgress: (Float) -> Unit): File {
+        var last: Throwable? = null
+        for ((c, f) in tries) {
+            try {
+                dir.listFiles()?.filter { it.name.startsWith("$tag.") }?.forEach { it.delete() }
+                return fetch(app, url, c, f, dir, tag, onProgress)
+            } catch (e: Throwable) {
+                last = e
+            }
+        }
+        throw last ?: IOException("download failed")
+    }
+
+    private fun tries(client: String, id: String, generic: String) = listOf(client to id) + clients.filter { it != client }.map { it to generic }
+
     private fun store(app: Context, f: File, name: String, mime: String): Uri {
         val dst = Storage.create(app, name, mime)
         try {
@@ -166,6 +182,9 @@ object YtDlp {
         val audioId = o.audioUrl?.let { split(it).second }
         val fmt = o.fmt
         val shown = if (fmt != null) fmt.ext else o.ext
+        val h = o.label.removeSuffix("p").toIntOrNull() ?: 4320
+        val audioOnly = fmt != null || o.mime.startsWith("audio")
+        val gMain = if (audioOnly) "ba[ext=m4a]/ba" else if (audioId != null) "bv[ext=mp4][vcodec^=avc1][height<=$h]/bv[height<=$h]" else "b[ext=mp4][height<=$h]/b[height<=$h]/b"
         val ph = Downloader.addConverting("$base.$shown")
         Downloader.beginWork()
         Thread({
@@ -174,13 +193,13 @@ object YtDlp {
             try {
                 ui.post { toast(app, "Download started") }
                 val steps = if (audioId != null) 2f else 1f
-                val main = fetch(app, pageUrl, client, fid, tmp, "m") { p -> ph.convPct = p / steps }
+                val main = tryFetch(app, pageUrl, tries(client, fid, gMain), tmp, "m") { p -> ph.convPct = p / steps }
                 if (fmt != null) {
                     val t = DlTask(UUID.randomUUID().toString(), "", "", "", "")
                     t.uri = Uri.fromFile(main)
                     AudioConvert.run(app, base, info.title, info.author, t, fmt)
                 } else if (audioId != null) {
-                    val aud = fetch(app, pageUrl, client, audioId, tmp, "a") { p -> ph.convPct = 0.5f + p / steps }
+                    val aud = tryFetch(app, pageUrl, tries(client, audioId, "ba[ext=m4a]/ba"), tmp, "a") { p -> ph.convPct = 0.5f + p / steps }
                     val dst = Storage.create(app, "$base.mp4", "video/mp4")
                     try {
                         Mux.mux(app, Uri.fromFile(main), Uri.fromFile(aud), dst)
@@ -191,8 +210,8 @@ object YtDlp {
                         throw e
                     }
                 } else {
-                    val mime = if (o.mime.startsWith("audio")) o.mime else "video/mp4"
-                    val ext = if (o.mime.startsWith("audio")) o.ext else "mp4"
+                    val ext = if (audioOnly) main.extension else "mp4"
+                    val mime = if (!audioOnly) "video/mp4" else if (ext == "m4a") "audio/mp4" else "audio/webm"
                     publish(app, store(app, main, "$base.$ext", mime), "$base.$ext", mime)
                 }
             } catch (e: Throwable) {
