@@ -96,7 +96,7 @@ dependencies {
     // تنزيل يوتيوب: بلا أي مكتبة استخراج/فك-تشفير محلية — خادم Piped العام (مفتوح المصدر) يرجّع روابط تنزيل جاهزة
     // عبر JSON عادي (org.json)، فيعمل على كل الأجهزة من أندرويد 7 فصاعداً بلا أي قيود توافق. انظر YtFetch في yt/YtDownload.kt
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
-    implementation("org.conscrypt:conscrypt-android:2.5.2")        // طبقة TLS حديثة مستقلة عن نظام الجهاز — تحل فشل التنزيل الفعلي (googlevideo) على الأجهزة القديمة
+    implementation("org.conscrypt:conscrypt-android:2.8.0")        // طبقة TLS حديثة مستقلة عن نظام الجهاز — تحل فشل التنزيل الفعلي (googlevideo) على الأجهزة القديمة
     implementation("com.github.NorthernCaptain:TAndroidLame:1.1") {
         exclude(group = "com.android.support")
     }   // LAME MP3 encoder (JNI wrapper)
