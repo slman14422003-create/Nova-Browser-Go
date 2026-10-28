@@ -1,0 +1,11 @@
+# Baseline Profile عام: يُترجَم مسبقاً عند تثبيت التطبيق فيقلّ التقطيع وزمن البدء
+HSPLandroidx/compose/**;->**(**)**
+HSPLandroidx/activity/**;->**(**)**
+HSPLandroidx/lifecycle/**;->**(**)**
+HSPLandroidx/webkit/**;->**(**)**
+HSPLandroidx/core/**;->**(**)**
+HSPLcom/nova/browser/**;->**(**)**
+Landroidx/compose/**;
+Landroidx/activity/**;
+Landroidx/lifecycle/**;
+Lcom/nova/browser/**;

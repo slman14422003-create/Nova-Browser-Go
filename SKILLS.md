@@ -1,0 +1,42 @@
+# SKILLS - Nova Browser Go work log
+
+## Done in this task
+- Download failure "CertPathValidatorException: Trust anchor for certification path not found"
+  - Cause: only ISRG Root X1 was added as an extra trust anchor; googlevideo.com uses Google Trust Services roots that old devices lack.
+  - Fix: res/raw/extra_roots.pem (39 valid roots incl. GTS R1-R4, ISRG X1/X2, GlobalSign, DigiCert, USERTrust, Amazon, Sectigo).
+  - core/NovaApp.kt: new `Tls` object builds a merged trust manager (system first, bundled roots as fallback).
+  - `Tls.apply(builder)` now used by the OkHttp clients in yt/YtDownload.kt (YtFetch) and core/Suggest.kt (NetKit).
+- Friendly TLS error text (res/values/strings.xml + values-ar/strings.xml) via `describe()` in download/Downloader.kt.
+- Low-end tuning: progress tick 800ms and 64KB buffer when LowEnd.on; mux buffer sized from KEY_MAX_INPUT_SIZE instead of fixed 4MB.
+
+## Pending
+- MP3 conversion: Android has no MP3 encoder. AudioFormats.all in download/AudioConvert.kt is empty on purpose (FFmpeg removed).
+  Needs a decision: native LAME wrapper (adds .so per ABI) or a pure-Java encoder.
+- Once an encoder exists: fill AudioFormats.all, implement AudioConvert.run (MediaCodec decode -> PCM -> encoder), the sheet in yt/YtDownload.kt already lists AudioFmt entries.
+
+## Notes
+- Project had no way to compile here (no Gradle/kotlinc offline): build once in CI and check for compile errors.
+- No README created (user preference). New code has no Arabic text; user-visible strings go in res/values*/strings.xml.
+
+## Task 2: HTTP 403 mid-download (YouTube)
+- googlevideo links are IP/session bound and throttle parallel ranges. YouTube tasks now use 1 connection (DlTask.connLimit) and on HTTP 403/410 fetch a fresh link via DlTask.refresher (max 4 times) and continue.
+- Not verified on device. If 403 persists, check VPN/IPv6 mismatch between the extractor client and the downloader.
+
+## Task 3: 403 persists, stuck at 0 B
+- Likely cause: link came from a different InnerTube client (IOS/TV/web) than the UA used for the download. Now the UA is derived from the link's `c` param (ytUaFor) at start and after each refresh.
+- 403 refresh events are logged via YtLog (c= old -> new). Check the log if it still fails; YouTube may require PO tokens for these clients.
+
+## Task 4: 403 again + more audio formats
+- Downloader now uses OkHttp (DlHttp) instead of HttpURLConnection; IPv4-first DNS (v4first) for both the extractor and the downloader so both hit googlevideo from the same IP (links are IP bound). No cookies/Referer sent to googlevideo.
+- Empty error text now shows the exception class name.
+- Audio list now shows every available stream (M4A AAC / WebM Opus at each bitrate).
+- MP3 still pending (needs an encoder library).
+
+## Task 5: MP3 conversion
+- Dependency: com.github.NorthernCaptain:TAndroidLame:1.1 (JitPack, LAME JNI wrapper). Package assumed com.naman14.androidlame; used through reflection (Mp3Lame in download/AudioConvert.kt) so a mismatch cannot break compilation; MP3 options are hidden when the library or its native .so is missing.
+- Flow: download the AAC m4a, decode with MediaCodec, encode with LAME (128/192/320 kbps), save as .mp3, delete the source. On failure the m4a is kept and a message is shown.
+- ProGuard keeps com.naman14.androidlame.**.
+- Risks to verify on first build: JitPack artifact resolves; arm64-v8a .so exists (and 16KB alignment on Android 15+ devices); wrapper license is GPLv3.
+
+## Task 6: diagnostics for 403
+- On a rejected range request the failure text now ends with: host, client (c=), Server header and first 120 chars of the response body (also in YtLog). Use it to identify the real cause (PO token, IP mismatch, expired link).
