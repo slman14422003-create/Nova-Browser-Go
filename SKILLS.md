@@ -72,3 +72,11 @@
 - yt/YtDlp.kt: when a token exists, clients mweb and web_safari are tried first with `--extractor-args youtube:player_client=X;po_token=X.gvs+..,X.player+..;visitor_data=..`; otherwise the old client list. Cookies retry (Task 8) still applies on top.
 - Written from memory of the BotGuard protocol (as used by NewPipe/BgUtils) and NOT tested: if the log shows "po-token: failed ..." the message says which step broke (Create parse, vm missing, no minter...). Send those lines.
 - ProGuard keeps PoToken.Bridge (JavascriptInterface).
+
+## Task 10: yt-dlp never updated (GitHub blocked) + outdated client list
+- Cause 1: the bundled yt-dlp (youtubedl-android 0.18.1) was updated only through github.com, which is blocked on the user's network, so it stayed old and its client names/behaviour no longer match YouTube.
+- Cause 2: client list android_vr/tv/ios/default; in yt-dlp 2026.10.26 android_vr and ios require a PO token, and the new defaults are tv_samsung, visionos, web (no token needed for tv_samsung/visionos/tv).
+- Fix: new yt/YtDlpUpdate.kt downloads the latest yt-dlp zipapp (nightly repo first, then stable) through the Worker (/gh/... and /dl?u=, already in worker.js; direct GitHub as fallback), verifies SHA2-256SUMS (or the asset digest), checks it is a zipapp, keeps yt-dlp.bak, replaces the binary found under noBackupFilesDir. Version/signature kept in prefs "ytdlp" (tag, sig); if the lib re-extracts its old binary the signature differs and an update is forced.
+- yt/YtDlp.kt: runUpdate tries the Worker updater first, then the old library updater; update checked daily (or immediately when stale); baseClients = default, tv, tv_downgraded, android_vr, ios; first extraction waits up to 25 s for the update.
+- Not compiled/tested here (no Gradle/network). If the log shows "yt-dlp-update: binary not found; noBackupFilesDir: ..." the path to the lib's yt-dlp file differs: send that line.
+- Not changed: worker.js (no redeploy needed). yt-ai (needs a Python server) and YoutubeDownloader (C#, YoutubeExplode) were reviewed: nothing usable on-device.
