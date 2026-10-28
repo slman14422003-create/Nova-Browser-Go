@@ -95,9 +95,17 @@ object YtDlp {
         return YtInfo(j.optString("title", "YouTube video"), j.optString("uploader"), videos, audios, j.optLong("duration"))
     }
 
+    private fun describe(e: Throwable): String {
+        val c = e.cause
+        return e.javaClass.name + ": " + (e.message ?: "") + (if (c != null && c !== e) " / " + c.javaClass.name + ": " + (c.message ?: "") else "")
+    }
+
     fun info(ctx: Context, url: String): YtInfo {
         val app = ctx.applicationContext
-        ensure(app)
+        try { ensure(app) } catch (e: Throwable) {
+            YtLog.add("yt-dlp init failed: " + describe(e))
+            throw IOException("init: " + describe(e).take(400))
+        }
         var last: Throwable? = null
         for (round in 0..1) {
             for (c in clients) {
@@ -117,7 +125,7 @@ object YtDlp {
                 maybeUpdate(app, true)
             } else break
         }
-        throw IOException(last?.message?.take(300) ?: "extraction failed")
+        throw IOException(last?.let { describe(it).take(400) } ?: "extraction failed")
     }
 
     private fun fetch(app: Context, url: String, client: String, fmt: String, dir: File, tag: String, onProgress: (Float) -> Unit): File {
