@@ -4,20 +4,26 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 object YtDlp {
     private const val SCHEME = "ytdlp:"
     private val clients = listOf("android_vr", "tv", "ios", "default")
     @Volatile private var ready = false
     @Volatile private var triedUpdate = false
+    @Volatile private var updater: Thread? = null
 
     fun owns(url: String) = url.startsWith(SCHEME)
+
+    private fun log(m: String) = YtLog.add("yt-dlp: $m")
 
     private fun ref(client: String, id: String) = "$SCHEME$client|$id"
 
@@ -30,25 +36,100 @@ object YtDlp {
 
     @Synchronized
     private fun ensure(app: Context) {
-        if (ready) return
-        YoutubeDL.getInstance().init(app)
-        ready = true
+        if (!ready) {
+            YoutubeDL.getInstance().init(app)
+            ready = true
+            log("ready, qjs=" + File(app.applicationInfo.nativeLibraryDir, "libqjs.so").exists())
+        }
         maybeUpdate(app, false)
     }
 
-    private fun maybeUpdate(app: Context, force: Boolean) {
-        val sp = app.getSharedPreferences("ytdlp", Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        if (!force && now - sp.getLong("upd", 0L) < 2 * 86_400_000L) return
-        runCatching { YoutubeDL.getInstance().updateYoutubeDL(app) }
-        sp.edit().putLong("upd", now).apply()
+    /** قناة nightly تصلح تغييرات يوتيوب قبل stable؛ اسم الـ API يختلف بين إصدارات المكتبة فيُبحث عنه بالانعكاس (وإلا stable). */
+    private fun nightlyChannel(): Any? = runCatching {
+        val cls = Class.forName("com.yausername.youtubedl_android.YoutubeDL\$UpdateChannel")
+        cls.declaredClasses.firstOrNull { it.simpleName == "NIGHTLY" }?.getField("INSTANCE")?.get(null)
+            ?: cls.fields.firstOrNull { it.name.trimStart('_') == "NIGHTLY" }?.get(null)
+            ?: cls.getField("Companion").get(null).let { c ->
+                c.javaClass.methods.firstOrNull { it.name.contains("NIGHTLY", true) && it.parameterCount == 0 }?.invoke(c)
+            }
+    }.getOrNull()
+
+    private fun runUpdate(app: Context): String {
+        val yt = YoutubeDL.getInstance()
+        nightlyChannel()?.let { ch ->
+            try {
+                val m = yt.javaClass.methods.first { it.name == "updateYoutubeDL" && it.parameterCount == 2 }
+                return "nightly: " + m.invoke(yt, app, ch)
+            } catch (e: Throwable) { log("nightly update failed: " + brief(e.cause ?: e)) }
+        }
+        return "stable: " + yt.updateYoutubeDL(app)
     }
 
-    private fun request(app: Context, url: String, client: String): YoutubeDLRequest {
+    /** التحديث في خيط خلفي: كان يعمل داخل ensure() بلا مهلة، فإن كان GitHub بطيئاً/محجوباً بقي الاستخراج معلّقاً. */
+    @Synchronized
+    private fun maybeUpdate(app: Context, force: Boolean): Thread? {
+        updater?.let { if (it.isAlive) return it }
+        val sp = app.getSharedPreferences("ytdlp", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (!force && (now - sp.getLong("upd", 0L) < 2 * 86_400_000L || now - sp.getLong("try", 0L) < 30 * 60_000L)) return null
+        sp.edit().putLong("try", now).apply()
+        val th = Thread({
+            try {
+                val r = runUpdate(app)
+                log("update ok: $r")
+                sp.edit().putLong("upd", System.currentTimeMillis()).apply()
+            } catch (e: Throwable) { log("update failed: " + brief(e)) }
+        }, "nova-ytdlp-update").apply { isDaemon = true; start() }
+        updater = th
+        return th
+    }
+
+    private fun brief(e: Throwable): String {
+        val msgs = generateSequence(e) { c -> c.cause?.takeIf { it !== c } }.mapNotNull { it.message }.joinToString("\n")
+        val lines = msgs.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val key = lines.filter { it.startsWith("ERROR") || it.contains("HTTP Error") || it.contains("Sign in") }.distinct()
+        return (if (key.isNotEmpty()) key else lines.take(3)).joinToString("\n").take(500).ifBlank { e.javaClass.simpleName }
+    }
+
+    /** يشغّل yt-dlp مع حارس: يقتل العملية إن لم يصل أي ناتج/تقدّم خلال المهلة (كان يعلق عند 0% بلا نهاية). */
+    private fun exec(req: YoutubeDLRequest, startMs: Long, idleMs: Long, totalMs: Long, onProgress: ((Float) -> Unit)? = null): String {
+        val pid = UUID.randomUUID().toString()
+        val t0 = SystemClock.elapsedRealtime()
+        val last = AtomicLong(t0)
+        val got = AtomicBoolean(false)
+        val done = AtomicBoolean(false)
+        val killed = AtomicBoolean(false)
+        val dog = Thread {
+            while (!done.get()) {
+                try { Thread.sleep(1500) } catch (_: InterruptedException) { return@Thread }
+                val now = SystemClock.elapsedRealtime()
+                val limit = if (got.get()) idleMs else startMs
+                if (now - last.get() > limit || now - t0 > totalMs) {
+                    killed.set(true)
+                    runCatching { YoutubeDL.getInstance().destroyProcessById(pid) }
+                    return@Thread
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            return YoutubeDL.getInstance().execute(request = req, processId = pid, callback = { p, _, _ ->
+                last.set(SystemClock.elapsedRealtime())
+                if (p > 0f) got.set(true)
+                onProgress?.invoke((p / 100f).coerceIn(0f, 1f))
+            }).out
+        } catch (e: Throwable) {
+            if (killed.get()) throw IOException(Downloader.str(R.string.dl_err_stalled), e)
+            throw e
+        } finally { done.set(true); dog.interrupt() }
+    }
+
+    private fun request(app: Context, url: String, client: String, ipv4: Boolean = true): YoutubeDLRequest {
         val r = YoutubeDLRequest(url)
         r.addOption("--no-playlist")
         r.addOption("--no-warnings")
-        r.addOption("--force-ipv4")
+        r.addOption("--socket-timeout", "20")
+        r.addOption("--extractor-retries", "1")
+        if (ipv4) r.addOption("--force-ipv4")
         if (client != "default") r.addOption("--extractor-args", "youtube:player_client=$client")
         val qjs = File(app.applicationInfo.nativeLibraryDir, "libqjs.so")
         if (qjs.exists()) r.addOption("--js-runtimes", "quickjs:" + qjs.absolutePath)
@@ -96,65 +177,88 @@ object YtDlp {
         return YtInfo(j.optString("title", "YouTube video"), j.optString("uploader"), videos, audios, j.optLong("duration"))
     }
 
-    private fun describe(e: Throwable): String {
-        val c = e.cause
-        return e.javaClass.name + ": " + (e.message ?: "") + (if (c != null && c !== e) " / " + c.javaClass.name + ": " + (c.message ?: "") else "")
-    }
-
     fun info(ctx: Context, url: String): YtInfo {
         val app = ctx.applicationContext
+        Downloader.init(app)
         try { ensure(app) } catch (e: Throwable) {
-            YtLog.add("yt-dlp init failed: " + describe(e))
-            throw IOException("init: " + describe(e).take(400))
+            log("init failed: " + brief(e))
+            throw IOException("init: " + brief(e))
         }
-        var last: Throwable? = null
+        updater?.takeIf { it.isAlive }?.let { runCatching { it.join(15_000) } }
+        val deadline = SystemClock.elapsedRealtime() + 80_000L
+        val errs = ArrayList<String>()
         for (round in 0..1) {
             for (c in clients) {
+                if (SystemClock.elapsedRealtime() > deadline) break
                 try {
                     val r = request(app, url, c)
                     r.addOption("--dump-single-json")
-                    val out = YoutubeDL.getInstance().execute(request = r, processId = null, callback = null).out
-                    val info = parse(JSONObject(out), c)
-                    if (info.videos.isNotEmpty() || info.audios.isNotEmpty()) return info
-                    last = IOException("no usable formats")
+                    val out = exec(r, 55_000L, 55_000L, 55_000L)
+                    val js = out.lineSequence().lastOrNull { it.trimStart().startsWith("{") } ?: throw IOException("no json")
+                    val info = parse(JSONObject(js), c)
+                    if (info.videos.isNotEmpty() || info.audios.isNotEmpty()) { log("info ok client=$c"); return info }
+                    errs.add("$c: no usable formats")
                 } catch (e: Throwable) {
-                    last = e
+                    val b = brief(e)
+                    log("info $c failed: $b")
+                    errs.add("$c: $b")
                 }
             }
-            if (round == 0 && !triedUpdate) {
+            if (round == 0 && !triedUpdate && SystemClock.elapsedRealtime() < deadline) {
                 triedUpdate = true
-                maybeUpdate(app, true)
+                maybeUpdate(app, true)?.let { runCatching { it.join(40_000) } }
             } else break
         }
-        throw IOException(last?.let { describe(it).take(400) } ?: "extraction failed")
+        // الاحتياط: استخراج الصفحة نفسها (روابط من مشغّل WebView تحمل PO token) ثم InnerTube/Piped
+        val fb = runCatching { YtFetch.info(url) }
+        fb.getOrNull()?.let { log("info via backup extractor"); return it }
+        throw IOException(
+            errs.distinct().take(4).joinToString("\n").take(600) + "\n— " +
+                (fb.exceptionOrNull()?.message ?: "").lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
+        )
     }
 
-    private fun fetch(app: Context, url: String, client: String, fmt: String, dir: File, tag: String, onProgress: (Float) -> Unit): File {
-        val r = request(app, url, client)
-        r.addOption("-f", fmt)
+    private class Attempt(val client: String, val fmt: String, val ipv4: Boolean)
+
+    private fun fetch(app: Context, url: String, a: Attempt, dir: File, tag: String, onProgress: (Float) -> Unit): File {
+        val r = request(app, url, a.client, a.ipv4)
+        r.addOption("-f", a.fmt)
         r.addOption("-o", File(dir, "$tag.%(ext)s").absolutePath)
         r.addOption("--no-mtime")
-        r.addOption("--retries", "5")
-        r.addOption("--fragment-retries", "5")
-        YoutubeDL.getInstance().execute(request = r, processId = null, callback = { p, _, _ -> onProgress((p / 100f).coerceIn(0f, 1f)) })
+        r.addOption("--newline")
+        r.addOption("--retries", "3")
+        r.addOption("--fragment-retries", "3")
+        exec(r, 120_000L, 45_000L, 6 * 3600_000L, onProgress)
         return dir.listFiles()?.firstOrNull { it.name.startsWith("$tag.") && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
             ?: throw IOException("no output file")
     }
 
-    private fun tryFetch(app: Context, url: String, tries: List<Pair<String, String>>, dir: File, tag: String, onProgress: (Float) -> Unit): File {
-        var last: Throwable? = null
-        for ((c, f) in tries) {
-            try {
-                dir.listFiles()?.filter { it.name.startsWith("$tag.") }?.forEach { it.delete() }
-                return fetch(app, url, c, f, dir, tag, onProgress)
-            } catch (e: Throwable) {
-                last = e
-            }
-        }
-        throw last ?: IOException("download failed")
+    private fun attempts(client: String, id: String, generic: String): List<Attempt> {
+        val l = ArrayList<Attempt>()
+        l.add(Attempt(client, id, true))
+        clients.filter { it != client }.forEach { l.add(Attempt(it, generic, true)) }
+        l.add(Attempt(client, generic, false))   // آخر محاولة بلا --force-ipv4 (شبكات IPv6 فقط)
+        return l
     }
 
-    private fun tries(client: String, id: String, generic: String) = listOf(client to id) + clients.filter { it != client }.map { it to generic }
+    private fun tryFetch(app: Context, url: String, tries: List<Attempt>, dir: File, tag: String, onProgress: (Float) -> Unit): File {
+        val errs = ArrayList<String>()
+        var all403 = true
+        for (a in tries) {
+            try {
+                dir.listFiles()?.filter { it.name.startsWith("$tag.") }?.forEach { it.delete() }
+                log("fetch client=${a.client} ipv4=${a.ipv4} fmt=${a.fmt}")
+                return fetch(app, url, a, dir, tag, onProgress)
+            } catch (e: Throwable) {
+                val b = brief(e)
+                log("fetch ${a.client} failed: $b")
+                if (!b.contains("403")) all403 = false
+                errs.add("${a.client}: $b")
+            }
+        }
+        val head = if (all403) Downloader.str(R.string.dl_err_403) + "\n\n" else ""
+        throw IOException(head + errs.distinct().take(4).joinToString("\n").take(600))
+    }
 
     private fun store(app: Context, f: File, name: String, mime: String): Uri {
         val dst = Storage.create(app, name, mime)
@@ -174,6 +278,26 @@ object YtDlp {
         Downloader.addFinished(Storage.displayName(app, uri) ?: fallback, uri, mime, size)
     }
 
+    private fun hOf(o: YtOpt) = Regex("(\\d+)").find(o.label)?.value?.toIntOrNull() ?: 0
+
+    private fun pickBackup(fi: YtInfo, o: YtOpt): YtOpt? {
+        val f = o.fmt
+        if (f != null) return fi.audios.firstOrNull { it.fmt != null && it.fmt.label == f.label } ?: fi.audios.firstOrNull { it.fmt != null }
+        if (o.mime.startsWith("audio")) return fi.audios.firstOrNull { it.fmt == null } ?: fi.audios.firstOrNull()
+        val h = hOf(o)
+        return fi.videos.firstOrNull { hOf(it) == h } ?: fi.videos.filter { hOf(it) in 1..h }.maxByOrNull { hOf(it) } ?: fi.videos.lastOrNull()
+    }
+
+    /** عند فشل yt-dlp (غالباً 403 بلا PO token): نفس الخيار عبر مسار الصفحة/WebView ثم محرك التنزيل المدمج. */
+    private fun backup(app: Context, o: YtOpt, pageUrl: String, ph: DlTask): Boolean {
+        ph.phase = Downloader.str(R.string.dl_phase_backup); ph.indet = true
+        val fi = runCatching { YtFetch.info(pageUrl) }.onFailure { log("backup info failed: " + (it.message ?: "").take(160)) }.getOrNull() ?: return false
+        val opt = pickBackup(fi, o) ?: return false
+        log("backup engine: " + opt.label)
+        Handler(Looper.getMainLooper()).post { runCatching { YtDownload.start(app, fi, opt, pageUrl) }.onFailure { log("backup start failed: $it") } }
+        return true
+    }
+
     fun start(ctx: Context, info: YtInfo, o: YtOpt, pageUrl: String) {
         val app = ctx.applicationContext
         Downloader.init(app)
@@ -184,22 +308,41 @@ object YtDlp {
         val shown = if (fmt != null) fmt.ext else o.ext
         val h = o.label.removeSuffix("p").toIntOrNull() ?: 4320
         val audioOnly = fmt != null || o.mime.startsWith("audio")
-        val gMain = if (audioOnly) "ba[ext=m4a]/ba" else if (audioId != null) "bv[ext=mp4][vcodec^=avc1][height<=$h]/bv[height<=$h]" else "b[ext=mp4][height<=$h]/b[height<=$h]/b"
+        val np = "[protocol!*=m3u8]"   // m3u8 يحتاج ffmpeg وهو غير موجود
+        val gMain = if (audioOnly) "ba[ext=m4a]$np/ba$np" else if (audioId != null) "bv[ext=mp4][vcodec^=avc1][height<=$h]$np/bv[height<=$h]$np" else "b[ext=mp4][height<=$h]$np/b[height<=$h]$np/b$np"
         val ph = Downloader.addConverting("$base.$shown")
+        ph.phase = Downloader.str(R.string.dl_phase_prepare); ph.indet = true
         Downloader.beginWork()
         Thread({
             val ui = Handler(Looper.getMainLooper())
             val tmp = File(app.cacheDir, "ytdlp/" + UUID.randomUUID()).apply { mkdirs() }
+            var handedOff = false
             try {
-                ui.post { toast(app, "Download started") }
-                val steps = if (audioId != null) 2f else 1f
-                val main = tryFetch(app, pageUrl, tries(client, fid, gMain), tmp, "m") { p -> ph.convPct = p / steps }
+                val steps = if (audioId != null || fmt != null) 2f else 1f
+                val mainLabel = Downloader.str(if (audioOnly) R.string.dl_phase_audio else R.string.dl_phase_video)
+                val main = tryFetch(app, pageUrl, attempts(client, fid, gMain), tmp, "m") { p ->
+                    if (p > 0f) { ph.indet = false; ph.phase = mainLabel }
+                    ph.convPct = p / steps
+                }
                 if (fmt != null) {
                     val t = DlTask(UUID.randomUUID().toString(), "", "", "", "")
                     t.uri = Uri.fromFile(main)
-                    AudioConvert.run(app, base, info.title, info.author, t, fmt)
+                    ph.phase = Downloader.str(R.string.conv_progress); ph.indet = false; ph.convPct = 0.5f
+                    val ok = AudioConvert.run(app, base, info.title, info.author, t, fmt) { p -> ph.convPct = 0.5f + p / 2f }
+                    if (!ok) {
+                        val ext = main.extension.ifBlank { "m4a" }
+                        val mime = if (ext == "m4a") "audio/mp4" else "audio/webm"
+                        publish(app, store(app, main, "$base.$ext", mime), "$base.$ext", mime)
+                        ui.post { toast(app, Downloader.str(R.string.dl_saved_original)) }
+                    }
                 } else if (audioId != null) {
-                    val aud = tryFetch(app, pageUrl, tries(client, audioId, "ba[ext=m4a]/ba"), tmp, "a") { p -> ph.convPct = 0.5f + p / steps }
+                    val audLabel = Downloader.str(R.string.dl_phase_audio)
+                    ph.phase = audLabel; ph.indet = true; ph.convPct = 0.5f
+                    val aud = tryFetch(app, pageUrl, attempts(client, audioId, "ba[ext=m4a]$np/ba$np"), tmp, "a") { p ->
+                        if (p > 0f) ph.indet = false
+                        ph.convPct = 0.5f + p / steps
+                    }
+                    ph.phase = Downloader.str(R.string.dl_phase_merge); ph.indet = true
                     val dst = Storage.create(app, "$base.mp4", "video/mp4")
                     try {
                         Mux.mux(app, Uri.fromFile(main), Uri.fromFile(aud), dst)
@@ -207,16 +350,24 @@ object YtDlp {
                         publish(app, dst, "$base.mp4", "video/mp4")
                     } catch (e: Throwable) {
                         runCatching { Storage.delete(app, dst) }
-                        throw e
+                        throw IOException("merge failed: " + brief(e), e)
                     }
                 } else {
                     val ext = if (audioOnly) main.extension else "mp4"
                     val mime = if (!audioOnly) "video/mp4" else if (ext == "m4a") "audio/mp4" else "audio/webm"
                     publish(app, store(app, main, "$base.$ext", mime), "$base.$ext", mime)
                 }
+                ui.post { toast(app, Downloader.str(R.string.conv_done)) }
             } catch (e: Throwable) {
-                YtLog.add("yt-dlp failed: $e")
-                ui.post { toast(app, "Download failed: " + (e.message ?: "").take(120)) }
+                val msg = (e.message ?: e.javaClass.simpleName).take(700)
+                YtLog.add("yt-dlp failed: $msg")
+                handedOff = runCatching { backup(app, o, pageUrl, ph) }.getOrDefault(false)
+                if (!handedOff) {
+                    Downloader.addFailed("$base.$shown", msg, pageUrl) {
+                        start(app, info, o, pageUrl)
+                    }
+                    ui.post { toast(app, Downloader.str(R.string.dl_failed_title)) }
+                }
             } finally {
                 runCatching { tmp.deleteRecursively() }
                 Downloader.endConverting(ph)

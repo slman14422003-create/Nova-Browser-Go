@@ -32,4 +32,14 @@
     <string name="conv_progress">Converting to MP3</string>
     <string name="conv_m4a">MP3 encoder is unavailable. Saved as M4A instead.</string>
     <string name="conv_done">Saved to your downloads</string>
+    <string name="dl_phase_prepare">Preparing…</string>
+    <string name="dl_phase_video">Downloading video</string>
+    <string name="dl_phase_audio">Downloading audio</string>
+    <string name="dl_phase_merge">Merging audio and video</string>
+    <string name="dl_phase_backup">Trying backup method</string>
+    <string name="dl_saved_original">MP3 conversion failed. The original audio was saved instead.</string>
+    <string name="dl_copy_error">Copy error details</string>
+    <string name="dl_failed_title">Download failed</string>
+    <string name="dl_err_403">YouTube rejected the download link (HTTP 403). Play the video for a few seconds in the page, then try again.</string>
+    <string name="dl_err_stalled">The download stopped receiving data and was cancelled. Check the connection and try again.</string>
 </resources>

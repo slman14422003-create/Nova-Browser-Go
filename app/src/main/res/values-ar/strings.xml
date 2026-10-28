@@ -32,4 +32,14 @@
     <string name="conv_progress">جارٍ التحويل إلى MP3</string>
     <string name="conv_m4a">محوّل MP3 غير متوفر. تم الحفظ بصيغة M4A.</string>
     <string name="conv_done">تم الحفظ في التنزيلات</string>
+    <string name="dl_phase_prepare">جارٍ التحضير…</string>
+    <string name="dl_phase_video">جارٍ تنزيل الفيديو</string>
+    <string name="dl_phase_audio">جارٍ تنزيل الصوت</string>
+    <string name="dl_phase_merge">جارٍ دمج الصوت والفيديو</string>
+    <string name="dl_phase_backup">جارٍ تجربة طريقة بديلة</string>
+    <string name="dl_saved_original">فشل التحويل إلى MP3. تم حفظ الملف الصوتي الأصلي بدلاً منه.</string>
+    <string name="dl_copy_error">نسخ تفاصيل الخطأ</string>
+    <string name="dl_failed_title">فشل التنزيل</string>
+    <string name="dl_err_403">رفض يوتيوب رابط التنزيل (HTTP 403). شغّل الفيديو بضع ثوانٍ داخل الصفحة ثم أعد المحاولة.</string>
+    <string name="dl_err_stalled">توقف وصول البيانات فتم إلغاء التنزيل. تحقق من الاتصال وأعد المحاولة.</string>
 </resources>
