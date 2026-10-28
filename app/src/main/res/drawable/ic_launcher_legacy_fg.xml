@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- أندرويد 6/7: نفس الشعار بلا تدرج، مقصوص إلى المنطقة المرئية (72dp) ليظهر بحجم مناسب -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="72dp" android:height="72dp" android:viewportWidth="72" android:viewportHeight="72">
+    <group android:translateX="-18" android:translateY="-18">
+        <path android:pathData="M61.18,34.27A21.00,21.00 0 1,0 73.73,46.82" android:strokeColor="#FFFAF9F5" android:strokeWidth="4.5" android:strokeLineCap="round"/>
+        <path android:pathData="M65.45,39.15a3.40,3.40 0 1,0 6.80,0a3.40,3.40 0 1,0 -6.80,0z" android:fillColor="#FFFAF9F5"/>
+        <path android:pathData="M54.00,38.00C55.50,47.00 61.00,52.50 70.00,54.00C61.00,55.50 55.50,61.00 54.00,70.00C52.50,61.00 47.00,55.50 38.00,54.00C47.00,52.50 52.50,47.00 54.00,38.00z" android:fillColor="#FFE08A6A"/>
+    </group>
+</vector>

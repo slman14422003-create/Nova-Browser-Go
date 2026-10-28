@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dl_err_tls">فشل الاتصال الآمن. تأكد من صحة تاريخ ووقت الجهاز، وأوقف أي VPN أو DNS مُرشِّح، ثم أعد المحاولة.</string>
+    <string name="dl_err_tls_hint">إن استمر الفشل جرّب شبكة أخرى.</string>
+    <string name="conv_start">جارٍ التحويل إلى MP3...</string>
+    <string name="conv_fail">فشل التحويل. تم الاحتفاظ بالملف الأصلي.</string>
+    <string name="conv_offer_title">اكتمل التنزيل</string>
+    <string name="conv_offer_text">هل تريد تحويل هذا الفيديو إلى MP3؟</string>
+    <string name="conv_yes">تحويل</string>
+    <string name="conv_no">ليس الآن</string>
+    <string name="conv_action">تحويل إلى MP3</string>
+    <string name="conv_unavailable">محوّل MP3 غير متوفر</string>
+    <string name="upd_title">تحديث التطبيق</string>
+    <string name="upd_checking">جارٍ البحث عن تحديث</string>
+    <string name="upd_latest">أنت على أحدث إصدار</string>
+    <string name="upd_available">يتوفر إصدار جديد</string>
+    <string name="upd_downloading">جارٍ تنزيل التحديث</string>
+    <string name="upd_ready">جاهز للتثبيت</string>
+    <string name="upd_installing">جارٍ التثبيت</string>
+    <string name="upd_failed">فشل التحديث</string>
+    <string name="upd_check">تحقق الآن</string>
+    <string name="upd_download">تنزيل وتثبيت</string>
+    <string name="upd_install">تثبيت</string>
+    <string name="upd_cancel">إلغاء</string>
+    <string name="upd_retry">إعادة المحاولة</string>
+    <string name="upd_close">إغلاق</string>
+    <string name="upd_whatsnew">ما الجديد</string>
+    <string name="upd_current">الحالي</string>
+    <string name="upd_general">تحسينات وإصلاحات</string>
+    <string name="upd_wait">يرجى الانتظار</string>
+    <string name="upd_stalled">توقف الاتصال. أعد المحاولة.</string>
+    <string name="conv_progress">جارٍ التحويل إلى MP3</string>
+    <string name="conv_m4a">محوّل MP3 غير متوفر. تم الحفظ بصيغة M4A.</string>
+    <string name="conv_done">تم الحفظ في التنزيلات</string>
+</resources>
