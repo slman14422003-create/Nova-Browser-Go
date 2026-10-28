@@ -25,7 +25,7 @@ jobs:
       HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
       EVENT: ${{ github.event.workflow_run.event }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 20
