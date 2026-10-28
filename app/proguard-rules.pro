@@ -46,3 +46,7 @@
 -dontwarn com.fasterxml.jackson.**
 -dontwarn org.apache.commons.compress.**
 -dontwarn org.tukaani.xz.**
+
+-keepnames class * extends java.lang.Throwable
+-keep class org.apache.commons.compress.** { *; }
+-keep class org.tukaani.xz.** { *; }
