@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object YtDlp {
     private const val SCHEME = "ytdlp:"
-    private val baseClients = listOf("android_vr", "tv", "ios", "default")
+    private val baseClients = listOf("default", "tv", "tv_downgraded", "android_vr", "ios")
     private val poClients = setOf("mweb", "web", "web_safari")
     @Volatile private var po: PoToken.Tokens? = null
 
@@ -97,6 +97,7 @@ object YtDlp {
     }.getOrNull()
 
     private fun runUpdate(app: Context): String {
+        runCatching { return "worker: " + YtDlpUpdate.update(app) }.onFailure { log("worker update failed: " + brief(it)) }
         val yt = YoutubeDL.getInstance()
         nightlyChannel()?.let { ch ->
             try {
@@ -113,7 +114,8 @@ object YtDlp {
         updater?.let { if (it.isAlive) return it }
         val sp = app.getSharedPreferences("ytdlp", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        if (!force && (now - sp.getLong("upd", 0L) < 2 * 86_400_000L || now - sp.getLong("try", 0L) < 30 * 60_000L)) return null
+        val stale = !YtDlpUpdate.isCurrent(app)
+        if (!force && ((!stale && now - sp.getLong("upd", 0L) < 86_400_000L) || now - sp.getLong("try", 0L) < 30 * 60_000L)) return null
         sp.edit().putLong("try", now).apply()
         val th = Thread({
             try {
@@ -232,7 +234,7 @@ object YtDlp {
             log("init failed: " + brief(e))
             throw IOException("init: " + brief(e))
         }
-        updater?.takeIf { it.isAlive }?.let { runCatching { it.join(15_000) } }
+        updater?.takeIf { it.isAlive }?.let { runCatching { it.join(25_000) } }
         preparePo(app, url)
         val deadline = SystemClock.elapsedRealtime() + 80_000L
         val errs = ArrayList<String>()
