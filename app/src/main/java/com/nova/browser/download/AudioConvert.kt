@@ -137,9 +137,9 @@ object AudioConvert {
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun run(app: Context, base: String, title: String, artist: String, src: DlTask, fmt: AudioFmt) {
+    fun run(app: Context, base: String, title: String, artist: String, src: DlTask, fmt: AudioFmt, onProgress: (Float) -> Unit = {}): Boolean {
         val ui = Handler(Looper.getMainLooper())
-        val srcUri = src.uri ?: return
+        val srcUri = src.uri ?: return false
         ui.post { toast(app, Downloader.str(R.string.conv_start)) }
         val r = app.contentResolver
         var out: Uri? = null
@@ -152,16 +152,18 @@ object AudioConvert {
             out = dst
             if (lame) {
                 val os = r.openOutputStream(dst) ?: throw IOException("no output")
-                os.use { encode(app, srcUri, BufferedOutputStream(it, 64 * 1024), kbps) }
-            } else remux(app, srcUri, dst) {}
+                os.use { encode(app, srcUri, BufferedOutputStream(it, 64 * 1024), kbps, onProgress) }
+            } else remux(app, srcUri, dst, onProgress)
             Storage.finish(app, dst, mime)
             val size = r.openFileDescriptor(dst, "r")?.use { it.statSize } ?: -1L
             Downloader.addFinished(Storage.displayName(app, dst) ?: "$base.$ext", dst, mime, size)
             Downloader.removeOnMain(src, true)
+            return true
         } catch (e: Throwable) {
             out?.let { runCatching { Storage.delete(app, it) } }
             YtLog.add("mp3 convert failed: $e")
             ui.post { toast(app, Downloader.str(R.string.conv_fail)) }
+            return false
         }
     }
 

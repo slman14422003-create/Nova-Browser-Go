@@ -66,6 +66,9 @@ class DlTask(
     val refreshes = AtomicInteger(0)
     var converting by mutableStateOf(false)
     var convPct by mutableFloatStateOf(0f)
+    var phase by mutableStateOf("")                   // نص مرحلة المعالجة (تنزيل فيديو/صوت، دمج، تحويل)
+    var indet by mutableStateOf(false)                // شريط تقدم غير محدد (قبل وصول أول بايت)
+    @Volatile var retry: (() -> Unit)? = null         // زر «إعادة المحاولة» لمهام yt-dlp الفاشلة (لا تُحفظ بعد إعادة التشغيل)
     @Volatile var onDone: ((DlTask) -> Unit)? = null  // يُستدعى عند الاكتمال (لا يُحفظ بعد إعادة التشغيل)
 }
 
@@ -144,6 +147,14 @@ object Downloader {
 
     fun endConverting(t: DlTask) { main.post { tasks.remove(t) } }
 
+    /** بطاقة فشل دائمة (بدل Toast يختفي بسرعة) مع تفاصيل الخطأ كاملة وزر إعادة المحاولة. */
+    fun addFailed(name: String, error: String, origUrl: String, retry: () -> Unit) {
+        val t = DlTask(UUID.randomUUID().toString(), "", origUrl, "", "")
+        t.name = name; t.status = FAILED; t.error = error; t.resumable = false; t.retry = retry
+        main.post { tasks.add(0, t) }
+        notifyFail(t)
+    }
+
     private fun startService() {
         ensureEngine()
         runCatching { ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java)) }
@@ -194,6 +205,7 @@ object Downloader {
 
     fun resume(t: DlTask) {
         if (t.status != PAUSED && t.status != FAILED) return
+        t.retry?.let { r -> tasks.remove(t); r(); return }
         t.status = PREPARING; t.error = ""
         startService()
         pool.execute {
@@ -528,7 +540,7 @@ object Downloader {
     @Synchronized
     fun save() {
         val arr = JSONArray()
-        for (t in tasks.toList().filter { !it.converting }) {
+        for (t in tasks.toList().filter { !it.converting && it.retry == null }) {
             arr.put(JSONObject().apply {
                 put("id", t.id); put("url", t.url); put("orig", t.origUrl); put("ua", t.ua); put("ref", t.referer)
                 put("name", t.name); put("mime", t.mime); put("uri", t.uri?.toString() ?: "")

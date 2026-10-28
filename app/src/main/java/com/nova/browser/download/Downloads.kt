@@ -61,9 +61,10 @@ private fun statusLine(t: DlTask): String {
             val eta = if (t.speed > 0 && t.total > 0) " • ${fmtEta((t.total - t.downloaded) / t.speed)}" else ""
             ("" + (fmtSize(t.downloaded)) + " / " + tot + pct + " • " + (fmtSpeed(t.speed)) + eta + " • " + (t.conns) + L(" اتصال"))
         }
-        Downloader.CONVERTING -> Downloader.str(R.string.conv_progress) + " • " + (t.convPct * 100).toInt() + "%"
+        Downloader.CONVERTING -> if (t.phase.isNotBlank()) t.phase + (if (t.indet) "" else " • " + (t.convPct * 100).toInt() + "%")
+            else Downloader.str(R.string.conv_progress) + " • " + (t.convPct * 100).toInt() + "%"
         Downloader.PAUSED -> (L("متوقف • ") + (fmtSize(t.downloaded)) + " / " + tot)
-        Downloader.FAILED -> (L("فشل: ") + t.error.substringBefore(" host=").lineSequence().first().take(70))
+        Downloader.FAILED -> L("فشل التنزيل")
         else -> ("" + tot + L(" • اكتمل"))
     }
 }
@@ -135,6 +136,10 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                 Column(Modifier.weight(1f)) {
                     Text(t.name.ifBlank { hostOf(t.origUrl) }, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
                     Text(statusLine(t), style = MaterialTheme.typography.bodySmall, color = if (failed) cs.error else cs.onSurfaceVariant)
+                    if (failed && t.error.isNotBlank()) Text(
+                        t.error.take(700), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                        maxLines = 9, overflow = TextOverflow.Ellipsis
+                    )
                     if (done) Text(
                         kindLabel(kind) + " • " + hostOf(t.origUrl) + " • " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(t.createdAt)),
                         style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -144,6 +149,10 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, L("المزيد")) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(20.dp)) {
                         DropdownMenuItem(text = { Text(L("نسخ الرابط")) }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { menu = false; copyText(ctx, t.origUrl) })
+                        if (failed) DropdownMenuItem(
+                            text = { Text(androidx.compose.ui.res.stringResource(R.string.dl_copy_error)) }, leadingIcon = { Icon(Icons.Default.Edit, null) },
+                            onClick = { menu = false; copyText(ctx, t.name + "\n" + t.error + "\n\n" + YtLog.text().takeLast(1800)) }
+                        )
                         if (done) {
                             DropdownMenuItem(text = { Text(L("إزالة من القائمة")) }, leadingIcon = { Icon(Icons.Default.Close, null) }, onClick = { menu = false; Downloader.remove(t, false) })
                             DropdownMenuItem(text = { Text(L("حذف الملف")) }, leadingIcon = { Icon(Icons.Default.Delete, null) }, onClick = { menu = false; confirmDelete = true })
@@ -156,12 +165,15 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     NovaSpinner(size = 20.dp, color = cs.onSurfaceVariant)
                     Spacer(Modifier.width(10.dp))
-                    LinearProgressIndicator(
+                    if (t.indet) LinearProgressIndicator(
+                        modifier = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        color = cs.tertiary, trackColor = cs.surfaceContainerHighest
+                    ) else LinearProgressIndicator(
                         progress = { t.convPct.coerceIn(0f, 1f) }, modifier = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
                         color = cs.tertiary, trackColor = cs.surfaceContainerHighest
                     )
                 }
-            } else if (!done) { Spacer(Modifier.height(12.dp)); SegmentBar(t) }
+            } else if (!done && !(failed && t.retry != null)) { Spacer(Modifier.height(12.dp)); SegmentBar(t) }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
                 when {
                     t.converting -> {}
