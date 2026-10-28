@@ -59,3 +59,16 @@
 ## Task 7: error details copy
 - "Copy error details" now copies only the yt-dlp / innertube / http 4xx log lines (last 2500 chars) so the primary yt-dlp failure is not pushed out by the backup engine's log spam.
 - Open question: 403 persists with VPN off; waiting for the yt-dlp lines to see why the primary engine fails (bot check vs PO token).
+
+## Task 8: "Sign in to confirm you're not a bot" (log confirmed it is the primary failure)
+- Log: android_vr = bot check, tv = "page needs to be reloaded", ios = format unavailable, default = 403. The backup engine then 403s too (IOS link without PO token, WebView sniff finds 0 links).
+- Fix: on the first bot-check error yt-dlp is retried with the browser session cookies (YtDlp.cookieFile: Netscape file built from CookieManager for youtube/google, written to cacheDir/ytdlp/cookies.txt). Cookies are used only after a bot check, never by default. Applies to info() and to downloads.
+- If there are no cookies (not signed in), the card shows dl_err_login telling the user to sign in inside the YouTube page.
+- Risk: using a Google account session with yt-dlp can get the account flagged; exported live-session cookies may also rotate and stop working. Using a secondary account is safer.
+
+## Task 9: local PO token (BotGuard) for yt-dlp
+- New yt/PoToken.kt + assets/potoken.html: hidden WebView (base URL https://www.youtube.com) fetches the BotGuard challenge (jnn/v1/Create), runs the interpreter, calls GenerateIT, then mints two tokens with the web minter: one bound to visitorData (GVS) and one bound to the video id (player). Cached 20 min per video. 40 s timeout, logs "po-token: ..." in the diagnostics log.
+- visitorData order: YtSniff.visitor -> ytcfg VISITOR_DATA of the YouTube WebView -> youtubei visitor_id request.
+- yt/YtDlp.kt: when a token exists, clients mweb and web_safari are tried first with `--extractor-args youtube:player_client=X;po_token=X.gvs+..,X.player+..;visitor_data=..`; otherwise the old client list. Cookies retry (Task 8) still applies on top.
+- Written from memory of the BotGuard protocol (as used by NewPipe/BgUtils) and NOT tested: if the log shows "po-token: failed ..." the message says which step broke (Create parse, vm missing, no minter...). Send those lines.
+- ProGuard keeps PoToken.Bridge (JavascriptInterface).

@@ -1,0 +1,68 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+var REQ_KEY='O43z0dpjhgX20SCx4KAo';
+var API_KEY='AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAws';
+function b64ToU8(s){
+  s=s.replace(/-/g,'+').replace(/_/g,'/').replace(/\./g,'=');
+  while(s.length%4)s+='=';
+  var bin=atob(s),u=new Uint8Array(bin.length);
+  for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+  return u;
+}
+function u8ToB64(u){
+  var s='';
+  for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_');
+}
+async function post(path,body){
+  var r=await fetch('https://www.youtube.com/api/jnn/v1/'+path,{method:'POST',headers:{'Content-Type':'application/json+protobuf','x-goog-api-key':API_KEY,'x-user-agent':'grpc-web-javascript/0.1'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(path+' HTTP '+r.status);
+  return JSON.parse(await r.text());
+}
+function descramble(s){
+  var u=b64ToU8(s);
+  for(var i=0;i<u.length;i++)u[i]=(u[i]+97)&255;
+  return new TextDecoder().decode(u);
+}
+function firstString(a){
+  if(!Array.isArray(a))return null;
+  for(var i=0;i<a.length;i++)if(a[i]&&typeof a[i]==='string')return a[i];
+  return null;
+}
+function loadScriptUrl(u){
+  return new Promise(function(res,rej){
+    var e=document.createElement('script');
+    e.src=(u.indexOf('//')===0?'https:':'')+u;
+    e.onload=res;
+    e.onerror=function(){rej(new Error('interpreter load failed'))};
+    document.head.appendChild(e);
+  });
+}
+async function run(ids){
+  try{
+    var raw=await post('Create',[REQ_KEY]);
+    var cd=[];
+    if(raw.length>1&&typeof raw[1]==='string')cd=JSON.parse(descramble(raw[1])||'[]');
+    else if(raw.length&&typeof raw[0]==='object')cd=raw[0];
+    var script=firstString(cd[1]),url=firstString(cd[2]),program=cd[4],globalName=cd[5];
+    if(script)(new Function(script))();
+    else if(url)await loadScriptUrl(url);
+    else throw new Error('no interpreter');
+    var vm=window[globalName];
+    if(!vm||!vm.a)throw new Error('vm missing');
+    var snap=null;
+    vm.a(program,function(a){snap=a;},true,undefined,function(){},[[],[]]);
+    if(!snap)throw new Error('no snapshot function');
+    var webPo=[];
+    var resp=await new Promise(function(res,rej){
+      try{snap(function(r){res(r);},[undefined,undefined,webPo,undefined]);}catch(e){rej(e);}
+    });
+    var git=await post('GenerateIT',[REQ_KEY,resp]);
+    var getMinter=webPo[0];
+    if(typeof getMinter!=='function')throw new Error('no minter');
+    var mint=await getMinter(b64ToU8(git[0]));
+    var out=[];
+    for(var i=0;i<ids.length;i++)out.push(u8ToB64(await mint(new TextEncoder().encode(ids[i]))));
+    Android.done(JSON.stringify(out));
+  }catch(e){Android.fail(String((e&&e.message)||e));}
+}
+</script></body></html>

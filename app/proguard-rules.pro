@@ -50,3 +50,6 @@
 -keepnames class * extends java.lang.Throwable
 -keep class org.apache.commons.compress.** { *; }
 -keep class org.tukaani.xz.** { *; }
+
+-keep class com.nova.browser.PoToken$Bridge { *; }
+-keepclassmembers class com.nova.browser.PoToken$Bridge { @android.webkit.JavascriptInterface <methods>; }
