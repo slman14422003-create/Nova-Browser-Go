@@ -281,7 +281,15 @@ class MainActivity : ComponentActivity() {
             val lvl = Adaptive.level
             LaunchedEffect(lvl, Prefs.cap60) { applyRefreshCap(lvl) }
             LaunchedEffect(Unit) { kotlinx.coroutines.delay(if (LowEnd.on) 20000L else 4000L); Updater.check(applicationContext); if (!LowEnd.on) WebEngine.checkLatest(applicationContext) }   // بعد استقرار الواجهة
-            NovaTheme(this) { BrowserApp(start, dlTrigger, inPip, incoming) }
+            val conf = remember { ConfStore.open(applicationContext) }
+            var onboarding by remember { mutableStateOf(!conf.getBoolean("onboarded", false)) }
+            NovaTheme(this) {
+                // أول تثبيت فقط: برنامج الإعداد يبدأ من نفس شكل السبلاش ثم يُفتح المتصفح
+                androidx.compose.animation.Crossfade(targetState = onboarding, animationSpec = tween(Adaptive.ms(400)), label = "onboarding") { first ->
+                    if (first) Onboarding { conf.putBoolean("onboarded", true); conf.saveNow(); onboarding = false }
+                    else BrowserApp(start, dlTrigger, inPip, incoming)
+                }
+            }
         }
         ready = true
         // تسخين محرك الـ WebView عند أول فراغ، حتى لا يتقطع أول بحث

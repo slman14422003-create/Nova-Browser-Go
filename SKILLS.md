@@ -80,3 +80,12 @@
 - yt/YtDlp.kt: runUpdate tries the Worker updater first, then the old library updater; update checked daily (or immediately when stale); baseClients = default, tv, tv_downgraded, android_vr, ios; first extraction waits up to 25 s for the update.
 - Not compiled/tested here (no Gradle/network). If the log shows "yt-dlp-update: binary not found; noBackupFilesDir: ..." the path to the lib's yt-dlp file differs: send that line.
 - Not changed: worker.js (no redeploy needed). yt-ai (needs a Python server) and YoutubeDownloader (C#, YoutubeExplode) were reviewed: nothing usable on-device.
+
+## Task 11: first-run setup wizard + start page polish
+- New ui/Onboarding.kt (Compose): Welcome (same bg/icon as the splash, icon shrinks up and text fades in) -> Language -> Theme (live) -> Search engine -> Privacy toggles -> Notifications + default browser -> WebView update check -> Done. Animated step transitions, staggered item entrance, press feedback, progress segments, skip button, back handling.
+- WebView step: WebEngine.checkLatest(force) then shows "update now" (WebEngine.openStore) only if WebEngine.behind >= 1; up to date or check failed = auto-advance after 1.5 s when moving forward.
+- Shown once: ConfStore key "onboarded" (set when finished or skipped). MainActivity.showUi uses Crossfade(onboarding) so BrowserApp (and its WebView) is created only after the wizard. Builds updated over an old install also show it once because the key is absent.
+- NovaMark composable draws the splash icon geometry (splash_icon.xml) on a Canvas, so it can be animated.
+- StartPage: press scale on tiles/AI card, staggered entrance for sections (all through Adaptive.ms).
+- I18n.en: 49 new pairs for the wizard strings.
+- Not compiled here. Only core Material icons are used (no material-icons-extended dependency).
