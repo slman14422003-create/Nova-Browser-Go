@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.webkit.CookieManager
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
@@ -16,10 +17,51 @@ import java.util.concurrent.atomic.AtomicLong
 
 object YtDlp {
     private const val SCHEME = "ytdlp:"
-    private val clients = listOf("android_vr", "tv", "ios", "default")
+    private val baseClients = listOf("android_vr", "tv", "ios", "default")
+    private val poClients = setOf("mweb", "web", "web_safari")
+    @Volatile private var po: PoToken.Tokens? = null
+
+    /** مع PO token تُجرَّب عملاء الويب أولاً (هي الوحيدة التي تقبل التوكن)، وإلا القائمة القديمة. */
+    private fun clientList() = if (po != null) listOf("mweb", "web_safari") + baseClients else baseClients
+
+    private fun preparePo(app: Context, url: String) {
+        val vid = YtSniff.videoId(url)
+        if (vid.isBlank()) { po = null; return }
+        po = runCatching { PoToken.get(app, vid) }.getOrNull()
+        log("po-token " + if (po != null) "ready" else "unavailable")
+    }
     @Volatile private var ready = false
     @Volatile private var triedUpdate = false
     @Volatile private var updater: Thread? = null
+    @Volatile private var cookiesOn = false
+
+    private fun isBot(m: String) = m.contains("Sign in to confirm") || m.contains("not a bot")
+
+    /** كوكيز جلسة يوتيوب/جوجل من الـ WebView بصيغة Netscape لـ yt-dlp (تُستخدم فقط بعد رفض «تأكيد أنك لست بوت»). */
+    private fun cookieFile(app: Context): File? = runCatching {
+        val cm = CookieManager.getInstance()
+        val sb = StringBuilder("# Netscape HTTP Cookie File\n")
+        var n = 0
+        for ((u, dom) in listOf("https://www.youtube.com" to ".youtube.com", "https://accounts.google.com" to ".google.com", "https://www.google.com" to ".google.com")) {
+            val s = cm.getCookie(u) ?: continue
+            for (kv in s.split(";")) {
+                val i = kv.indexOf('=')
+                if (i <= 0) continue
+                sb.append(dom).append("\tTRUE\t/\tTRUE\t2147483647\t").append(kv.substring(0, i).trim()).append('\t').append(kv.substring(i + 1).trim()).append('\n')
+                n++
+            }
+        }
+        if (n == 0) return@runCatching null
+        File(app.cacheDir, "ytdlp").apply { mkdirs() }.let { File(it, "cookies.txt") }.also { it.writeText(sb.toString()) }
+    }.getOrNull()
+
+    /** يفعّل الكوكيز لبقية الطلبات إن وُجدت جلسة؛ يعيد true إن تغيّر شيء ويستحق إعادة المحاولة. */
+    private fun enableCookies(app: Context): Boolean {
+        if (cookiesOn || cookieFile(app) == null) return false
+        cookiesOn = true
+        log("bot check -> retrying with the browser session cookies")
+        return true
+    }
 
     fun owns(url: String) = url.startsWith(SCHEME)
 
@@ -130,9 +172,15 @@ object YtDlp {
         r.addOption("--socket-timeout", "20")
         r.addOption("--extractor-retries", "1")
         if (ipv4) r.addOption("--force-ipv4")
-        if (client != "default") r.addOption("--extractor-args", "youtube:player_client=$client")
+        if (client != "default") {
+            val tok = po
+            val a = StringBuilder("youtube:player_client=$client")
+            if (tok != null && client in poClients) a.append(";po_token=$client.gvs+${tok.gvs},$client.player+${tok.player};visitor_data=${tok.visitor}")
+            r.addOption("--extractor-args", a.toString())
+        }
         val qjs = File(app.applicationInfo.nativeLibraryDir, "libqjs.so")
         if (qjs.exists()) r.addOption("--js-runtimes", "quickjs:" + qjs.absolutePath)
+        if (cookiesOn) cookieFile(app)?.let { r.addOption("--cookies", it.absolutePath) }
         return r
     }
 
@@ -185,23 +233,30 @@ object YtDlp {
             throw IOException("init: " + brief(e))
         }
         updater?.takeIf { it.isAlive }?.let { runCatching { it.join(15_000) } }
+        preparePo(app, url)
         val deadline = SystemClock.elapsedRealtime() + 80_000L
         val errs = ArrayList<String>()
         for (round in 0..1) {
-            for (c in clients) {
+            for (c in clientList()) {
                 if (SystemClock.elapsedRealtime() > deadline) break
-                try {
-                    val r = request(app, url, c)
-                    r.addOption("--dump-single-json")
-                    val out = exec(r, 55_000L, 55_000L, 55_000L)
-                    val js = out.lineSequence().lastOrNull { it.trimStart().startsWith("{") } ?: throw IOException("no json")
-                    val info = parse(JSONObject(js), c)
-                    if (info.videos.isNotEmpty() || info.audios.isNotEmpty()) { log("info ok client=$c"); return info }
-                    errs.add("$c: no usable formats")
-                } catch (e: Throwable) {
-                    val b = brief(e)
-                    log("info $c failed: $b")
-                    errs.add("$c: $b")
+                var pass = 0
+                while (pass++ < 2) {
+                    try {
+                        val r = request(app, url, c)
+                        r.addOption("--dump-single-json")
+                        val out = exec(r, 55_000L, 55_000L, 55_000L)
+                        val js = out.lineSequence().lastOrNull { it.trimStart().startsWith("{") } ?: throw IOException("no json")
+                        val info = parse(JSONObject(js), c)
+                        if (info.videos.isNotEmpty() || info.audios.isNotEmpty()) { log("info ok client=$c cookies=$cookiesOn"); return info }
+                        errs.add("$c: no usable formats")
+                        break
+                    } catch (e: Throwable) {
+                        val b = brief(e)
+                        log("info $c failed: $b")
+                        errs.add("$c: $b")
+                        if (isBot(b) && enableCookies(app)) continue
+                        break
+                    }
                 }
             }
             if (round == 0 && !triedUpdate && SystemClock.elapsedRealtime() < deadline) {
@@ -236,7 +291,7 @@ object YtDlp {
     private fun attempts(client: String, id: String, generic: String): List<Attempt> {
         val l = ArrayList<Attempt>()
         l.add(Attempt(client, id, true))
-        clients.filter { it != client }.forEach { l.add(Attempt(it, generic, true)) }
+        clientList().filter { it != client }.forEach { l.add(Attempt(it, generic, true)) }
         l.add(Attempt(client, generic, false))   // آخر محاولة بلا --force-ipv4 (شبكات IPv6 فقط)
         return l
     }
@@ -244,19 +299,26 @@ object YtDlp {
     private fun tryFetch(app: Context, url: String, tries: List<Attempt>, dir: File, tag: String, onProgress: (Float) -> Unit): File {
         val errs = ArrayList<String>()
         var all403 = true
+        var bot = false
         for (a in tries) {
-            try {
-                dir.listFiles()?.filter { it.name.startsWith("$tag.") }?.forEach { it.delete() }
-                log("fetch client=${a.client} ipv4=${a.ipv4} fmt=${a.fmt}")
-                return fetch(app, url, a, dir, tag, onProgress)
-            } catch (e: Throwable) {
-                val b = brief(e)
-                log("fetch ${a.client} failed: $b")
-                if (!b.contains("403")) all403 = false
-                errs.add("${a.client}: $b")
+            var pass = 0
+            while (pass++ < 2) {
+                try {
+                    dir.listFiles()?.filter { it.name.startsWith("$tag.") }?.forEach { it.delete() }
+                    log("fetch client=${a.client} ipv4=${a.ipv4} cookies=$cookiesOn fmt=${a.fmt}")
+                    return fetch(app, url, a, dir, tag, onProgress)
+                } catch (e: Throwable) {
+                    val b = brief(e)
+                    log("fetch ${a.client} failed: $b")
+                    if (!b.contains("403")) all403 = false
+                    if (isBot(b)) { bot = true; if (enableCookies(app)) continue }
+                    errs.add("${a.client}: ${b.take(160)}")
+                    break
+                }
             }
         }
-        val head = if (all403) Downloader.str(R.string.dl_err_403) + "\n\n" else ""
+        val head = (if (all403) Downloader.str(R.string.dl_err_403) + "\n\n" else "") +
+            (if (bot) Downloader.str(R.string.dl_err_login) + "\n\n" else "")
         throw IOException(head + errs.distinct().take(4).joinToString("\n").take(600))
     }
 
@@ -318,6 +380,7 @@ object YtDlp {
             val tmp = File(app.cacheDir, "ytdlp/" + UUID.randomUUID()).apply { mkdirs() }
             var handedOff = false
             try {
+                preparePo(app, pageUrl)
                 val steps = if (audioId != null || fmt != null) 2f else 1f
                 val mainLabel = Downloader.str(if (audioOnly) R.string.dl_phase_audio else R.string.dl_phase_video)
                 val main = tryFetch(app, pageUrl, attempts(client, fid, gMain), tmp, "m") { p ->

@@ -42,4 +42,5 @@
     <string name="dl_failed_title">Download failed</string>
     <string name="dl_err_403">YouTube rejected the download link (HTTP 403). Play the video for a few seconds in the page, then try again.</string>
     <string name="dl_err_stalled">The download stopped receiving data and was cancelled. Check the connection and try again.</string>
+    <string name="dl_err_login">YouTube asks to confirm you are not a bot. Sign in to your Google account in the YouTube page of this browser, play any video once, then try again.</string>
 </resources>
