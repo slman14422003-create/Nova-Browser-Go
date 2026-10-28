@@ -40,3 +40,18 @@
 
 ## Task 6: diagnostics for 403
 - On a rejected range request the failure text now ends with: host, client (c=), Server header and first 120 chars of the response body (also in YtLog). Use it to identify the real cause (PO token, IP mismatch, expired link).
+
+## Task 6: yt-dlp downloads stuck at 0% then "unable to download ... 403"
+- Symptoms: card shows "Converting to MP3 • 0%" (wrong text for video downloads), hangs, then a Toast with HTTP 403 that disappears before it can be read.
+- Causes found in yt/YtDlp.kt: no timeout on yt-dlp runs (a stalled client blocked the whole ladder); the yt-dlp self-update ran synchronously inside ensure() with no timeout (GitHub slow/blocked = sheet hangs on "fetching info"); error only shown as a 120-char Toast; the status text reused the MP3 string for every phase; generic format fallbacks could pick m3u8 (needs ffmpeg, absent).
+- Fixes:
+  - YtDlp.exec(): watchdog kills the yt-dlp process when no output arrives (120 s before first byte, 45 s after) or total time is exceeded; info() has an 80 s budget.
+  - Update runs in a background thread (nightly channel found by reflection, falls back to stable); retries at most every 30 min on failure.
+  - Download ladder: planned client+format, other clients with generic format, last try without --force-ipv4; generic formats exclude m3u8; --socket-timeout/--retries tuned.
+  - Backup engine: if yt-dlp fails (typically 403 without PO token) the same option is re-run through YtFetch (links captured from the YouTube WebView player) and the old Downloader; info() also falls back to YtFetch when yt-dlp cannot extract.
+  - Failures are now a persistent card (Downloader.addFailed) with the full error, "copy error details" (error + diagnostics log) and a working retry button, plus a failure notification.
+  - Real phase text on the card: preparing / downloading video / downloading audio / merging / converting to MP3 with progress; indeterminate bar until the first byte.
+  - MP3 conversion reports progress; if conversion fails the original audio is saved instead of being lost (AudioConvert.run now returns Boolean).
+- Strings added to values/ and values-ar/ (dl_phase_*, dl_err_403, dl_err_stalled, dl_saved_original, dl_copy_error, dl_failed_title).
+- Not compiled/tested here (no Gradle or network offline): build in CI and check for compile errors. Risky API names to check first: YoutubeDL.destroyProcessById, YoutubeDL.UpdateChannel (looked up by reflection).
+- If 403 still shows after both engines: copy the error details from the card (includes the diagnostics log) and send it.
