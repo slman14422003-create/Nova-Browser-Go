@@ -151,7 +151,7 @@ fun DownloadCard(t: DlTask, modifier: Modifier = Modifier) {
                         DropdownMenuItem(text = { Text(L("نسخ الرابط")) }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { menu = false; copyText(ctx, t.origUrl) })
                         if (failed) DropdownMenuItem(
                             text = { Text(androidx.compose.ui.res.stringResource(R.string.dl_copy_error)) }, leadingIcon = { Icon(Icons.Default.Edit, null) },
-                            onClick = { menu = false; copyText(ctx, t.name + "\n" + t.error + "\n\n" + YtLog.text().takeLast(1800)) }
+                            onClick = { menu = false; copyText(ctx, t.name + "\n" + t.error + "\n\n" + YtLog.text().lines().filter { it.contains("yt-dlp") || it.contains("innertube") || it.contains("http 4") }.joinToString("\n").takeLast(2500)) }
                         )
                         if (done) {
                             DropdownMenuItem(text = { Text(L("إزالة من القائمة")) }, leadingIcon = { Icon(Icons.Default.Close, null) }, onClick = { menu = false; Downloader.remove(t, false) })
