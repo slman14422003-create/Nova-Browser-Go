@@ -36,7 +36,8 @@ const val AI_MODE_URL = "https://www.google.com/search?udm=50"
 @Composable
 private fun SiteTile(st: Site, modifier: Modifier, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    Surface(onClick = onClick, shape = RoundedCornerShape(24.dp), color = cs.surfaceContainerHigh, modifier = modifier) {
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    Surface(onClick = onClick, interactionSource = src, shape = RoundedCornerShape(24.dp), color = cs.surfaceContainerHigh, modifier = modifier.pressScale(src, 0.95f)) {
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             IconCircle {
                 if (st.icon != null) Icon(st.icon, null, Modifier.size(22.dp), tint = cs.onSurface)
@@ -58,6 +59,11 @@ fun StartPage(
     LaunchedEffect(Unit) { shown = true }
     // حركة دخول واحدة تُنفَّذ في طبقة الرسم (بدون إعادة تركيب) لمنع التقطيع
     val appear by animateFloatAsState(if (shown) 1f else 0f, tween(Adaptive.ms(280)), label = "appear")
+    // ظهور متتابع للأقسام (يعمل في طبقة الرسم فقط، ويمرّ عبر Adaptive.ms فيتوقف عند السخونة)
+    val a2 by animateFloatAsState(if (shown) 1f else 0f, tween(Adaptive.ms(340), Adaptive.ms(80)), label = "appear2")
+    val a3 by animateFloatAsState(if (shown) 1f else 0f, tween(Adaptive.ms(340), Adaptive.ms(160)), label = "appear3")
+    val a4 by animateFloatAsState(if (shown) 1f else 0f, tween(Adaptive.ms(340), Adaptive.ms(240)), label = "appear4")
+    val aiSrc = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
     val greet = when { hour < 5 -> L("ليلة هادئة"); hour < 12 -> L("صباح الخير"); hour < 18 -> L("طاب يومك"); else -> L("مساء الخير") }
     val date = remember { java.text.SimpleDateFormat(L("EEEE، d MMMM"), java.util.Locale.forLanguageTag(I18n.code())).format(java.util.Date()) }
@@ -106,7 +112,10 @@ fun StartPage(
         Spacer(Modifier.height(18.dp))
 
         // وضع الذكاء الاصطناعي: بطاقة هادئة بألوان التطبيق فقط (لمسة التمييز tertiary)
-        Surface(onClick = onAi, shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            onClick = onAi, interactionSource = aiSrc, shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = a2; translationY = (1f - a2) * 28f }.pressScale(aiSrc, 0.98f)
+        ) {
             Row(Modifier.padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(44.dp).clip(CircleShape).background(cs.primaryContainer), contentAlignment = Alignment.Center) {
                     Text("✦", color = cs.tertiary, fontSize = 20.sp)
@@ -123,8 +132,8 @@ fun StartPage(
         }
 
         Spacer(Modifier.height(22.dp))
-        Text(L("وصول سريع"), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(L("وصول سريع"), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp).graphicsLayer { alpha = a3 })
+        Column(Modifier.graphicsLayer { alpha = a3; translationY = (1f - a3) * 28f }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             sites.chunked(3).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { st -> SiteTile(st, Modifier.weight(1f)) { onOpen(st.url) } }
@@ -134,7 +143,7 @@ fun StartPage(
         }
 
         Spacer(Modifier.height(18.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.graphicsLayer { alpha = a4; translationY = (1f - a4) * 28f }, verticalArrangement = Arrangement.spacedBy(3.dp)) {
             ListRow(groupShape(0, 2), L("التنزيلات"), dlSub, onDownloads) { IconCircle { Icon(Icons.Default.KeyboardArrowDown, null) } }
             ListRow(groupShape(1, 2), L("التبويبات"), ("" + tabsCount + L(" مفتوحة")), onTabs) { IconCircle { Icon(Icons.Default.Menu, null) } }
         }
